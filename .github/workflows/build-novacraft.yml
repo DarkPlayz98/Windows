@@ -26,10 +26,18 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: "latest"
+          packages: |
+            platform-tools
+            platforms;android-37
+            build-tools;37.0.0
+            ndk;27.3.13750724
 
-      - name: Install Android build components
+      - name: Verify Android SDK packages
         run: |
-          sdkmanager "platforms;android-37" "build-tools;37.0.0" "ndk;27.3.13750724"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          sdkmanager --sdk_root="$ANDROID_HOME" --list_installed
 
       - name: Download launcher source
         run: |
