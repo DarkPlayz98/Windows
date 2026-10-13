@@ -1,0 +1,55 @@
+name: NovaCraft Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-novacraft.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out NovaCraft build configuration
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build components
+        run: |
+          sdkmanager "platforms;android-37" "build-tools;37.0.0" "ndk;27.3.13750724"
+
+      - name: Download launcher source
+        run: |
+          git clone --branch v3_openjdk --recurse-submodules --depth 1 https://github.com/AngelAuraMC/Amethyst-Android.git launcher
+          cd launcher
+          git submodule update --init --recursive
+
+      - name: Build debug APK
+        working-directory: launcher
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :app_pojavlauncher:assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NovaCraft-debug-apk
+          path: launcher/app_pojavlauncher/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
