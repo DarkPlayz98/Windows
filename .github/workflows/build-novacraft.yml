@@ -32,8 +32,15 @@ jobs:
 
       - name: Install Android SDK packages
         run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake
           yes | sdkmanager --licenses
-          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.3.13750724"
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;27.3.13750724" \
+            "cmake;3.22.1"
 
       - name: Verify Android SDK packages
         run: |
@@ -42,22 +49,50 @@ jobs:
 
       - name: Download launcher source
         run: |
-          git clone --branch v3_openjdk --depth 1 https://github.com/AngelAuraMC/Amethyst-Android.git launcher
-          cd launcher
-
-          # Replace the known SSH-only submodule URL with public HTTPS before syncing.
-          sed -i 's#git@github.com:alexytomi/androidnsbypass.git#https://github.com/alexytomi/androidnsbypass.git#g' .gitmodules
-
-          # Keep both GitHub SSH-to-HTTPS rewrite rules instead of overwriting one.
           git config --global --add url."https://github.com/".insteadOf "git@github.com:"
           git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
 
+          git clone --branch v3_openjdk --depth 1 https://github.com/AngelAuraMC/Amethyst-Android.git launcher
+          cd launcher
+
+          # Rewrite all SSH GitHub URLs in .gitmodules to HTTPS before initializing submodules
+          sed -i 's#git@github.com:#https://github.com/#g' .gitmodules
+          sed -i 's#ssh://git@github.com/#https://github.com/#g' .gitmodules
+          cat .gitmodules
+
+          git submodule init
           git submodule sync --recursive
           git submodule update --init --recursive
 
-          # API 37 is not published in the runner SDK repository; compile against stable API 36.
-          sed -i "s/compileSdk = 37/compileSdk = 36/" app_pojavlauncher/build.gradle
-          grep -n "compileSdk" app_pojavlauncher/build.gradle
+          # Patch any nested .gitmodules just in case
+          find . -name ".gitmodules" -exec sed -i 's#git@github.com:#https://github.com/#g' {} +
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+          # Patch API 37 references to API 36 across all Gradle files
+          find . -name "build.gradle" -o -name "build.gradle.kts" | xargs sed -i \
+            -e 's/compileSdk = 37/compileSdk = 36/g' \
+            -e 's/compileSdk 37/compileSdk 36/g' \
+            -e 's/compileSdkVersion 37/compileSdkVersion 36/g' \
+            -e 's/targetSdk = 37/targetSdk = 36/g' \
+            -e 's/targetSdk 37/targetSdk 36/g' \
+            -e 's/targetSdkVersion 37/targetSdkVersion 36/g'
+
+          grep -rn "Sdk" app_pojavlauncher/build.gradle || true
+
+      - name: Prepare launcher pre-build assets
+        working-directory: launcher
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          chmod +x gradlew
+          if [ -f scripts/languagelist_updater.sh ]; then
+            chmod +x scripts/languagelist_updater.sh
+            bash scripts/languagelist_updater.sh
+          fi
+          ./gradlew --no-daemon :jre_lwjgl3glfw:build
 
       - name: Build debug APK
         working-directory: launcher
@@ -65,8 +100,7 @@ jobs:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
         run: |
-          chmod +x gradlew
-          ./gradlew --no-daemon :app_pojavlauncher:assembleDebug
+          ./gradlew --no-daemon :app_pojavlauncher:assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
