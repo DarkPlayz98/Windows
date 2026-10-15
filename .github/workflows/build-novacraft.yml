@@ -28,11 +28,12 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           cmdline-tools-version: "latest"
+          packages: "platform-tools"
 
       - name: Install Android SDK packages
         run: |
           yes | sdkmanager --licenses
-          sdkmanager --install "platform-tools" "platforms;android-37" "build-tools;37.0.0" "ndk;27.3.13750724" "tools"
+          sdkmanager --install "platform-tools" "platforms;android-37" "build-tools;37.0.0" "ndk;27.3.13750724"
 
       - name: Verify Android SDK packages
         run: |
