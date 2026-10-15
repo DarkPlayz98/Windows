@@ -42,9 +42,16 @@ jobs:
 
       - name: Download launcher source
         run: |
-          git clone --branch v3_openjdk --recurse-submodules --depth 1 https://github.com/AngelAuraMC/Amethyst-Android.git launcher
+          git clone --branch v3_openjdk --depth 1 https://github.com/AngelAuraMC/Amethyst-Android.git launcher
           cd launcher
+          # Convert SSH-style GitHub submodule URLs to HTTPS so Actions needs no SSH key.
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git submodule sync --recursive
           git submodule update --init --recursive
+          # API 37 is not published in the runner SDK repository; compile against stable API 36.
+          sed -i "s/compileSdk = 37/compileSdk = 36/" app_pojavlauncher/build.gradle
+          grep -n "compileSdk" app_pojavlauncher/build.gradle
           # API 37 is not published in the runner SDK repository; compile against stable API 36.
           sed -i "s/compileSdk = 37/compileSdk = 36/" app_pojavlauncher/build.gradle
           grep -n "compileSdk" app_pojavlauncher/build.gradle
