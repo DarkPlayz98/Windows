@@ -33,7 +33,7 @@ jobs:
       - name: Install Android SDK packages
         run: |
           yes | sdkmanager --licenses
-          sdkmanager --install "platform-tools" "platforms;android-37" "build-tools;37.0.0" "ndk;27.3.13750724"
+          sdkmanager --channel=3 --install "platform-tools" "platforms;android-37" "build-tools;37.0.0" "ndk;27.3.13750724"
 
       - name: Verify Android SDK packages
         run: |
