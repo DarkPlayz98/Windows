@@ -37,15 +37,23 @@ jobs:
           yes | sdkmanager --licenses
           sdkmanager --install \
             "platform-tools" \
+            "platforms;android-37.0" \
             "platforms;android-36" \
             "build-tools;36.0.0" \
             "ndk;27.3.13750724" \
-            "cmake;3.22.1"
+            "cmake;3.22.1" || \
+          sdkmanager --channel=3 --install \
+            "platforms;android-37.0"
+
+          if [ -d "$ANDROID_HOME/platforms/android-37.0" ] && [ ! -e "$ANDROID_HOME/platforms/android-37" ]; then
+            ln -s "$ANDROID_HOME/platforms/android-37.0" "$ANDROID_HOME/platforms/android-37"
+          fi
 
       - name: Verify Android SDK packages
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
           sdkmanager --list_installed
+          ls -la "$ANDROID_HOME/platforms"
 
       - name: Download launcher source
         run: |
@@ -68,15 +76,6 @@ jobs:
           find . -name ".gitmodules" -exec sed -i 's#git@github.com:#https://github.com/#g' {} +
           git submodule sync --recursive
           git submodule update --init --recursive
-
-          # Patch API 37 references to API 36 across all Gradle files
-          find . -name "build.gradle" -o -name "build.gradle.kts" | xargs sed -i \
-            -e 's/compileSdk = 37/compileSdk = 36/g' \
-            -e 's/compileSdk 37/compileSdk 36/g' \
-            -e 's/compileSdkVersion 37/compileSdkVersion 36/g' \
-            -e 's/targetSdk = 37/targetSdk = 36/g' \
-            -e 's/targetSdk 37/targetSdk 36/g' \
-            -e 's/targetSdkVersion 37/targetSdkVersion 36/g'
 
           grep -rn "Sdk" app_pojavlauncher/build.gradle || true
 
