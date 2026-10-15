@@ -236,8 +236,8 @@ jobs:
                                       break
                           if end != -1:
                               body = jtxt[brace_start + 1:end]
-                              replacement = f"""
-        try {{
+               
+        f""" try {{ ^^^^^^
 {body}
         }} catch (Throwable _novaErr) {{
             this.doesOwnGame = true;
