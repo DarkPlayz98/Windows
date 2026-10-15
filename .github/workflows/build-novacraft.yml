@@ -61,7 +61,17 @@ jobs:
           git submodule sync --recursive
           git submodule update --init --recursive
 
-      - name: Pre-download first Minecraft versions and apply NovaLauncher patches
+      - name: Run upstream language updater first
+        working-directory: launcher
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          chmod +x gradlew
+          if [ -f scripts/languagelist_updater.sh ]; then
+            chmod +x scripts/languagelist_updater.sh
+            bash scripts/languagelist_updater.sh
+          fi
+
+      - name: Apply NovaLauncher Branding, Real Xbox Gamertag Auth, Material 3 UI, and Modrinth Mod Downloader
         working-directory: launcher
         run: |
           python3 - << 'EOF'
@@ -71,7 +81,7 @@ jobs:
           import urllib.request
 
           # ---------------------------------------------------------
-          # 1. Fix SDK 36 & disable CheckAarMetadataTask in Gradle
+          # 1. Patch Gradle SDK 36, Disable CheckAarMetadata, and Strip "Amethyst Debug"
           # ---------------------------------------------------------
           for root, _, files in os.walk("."):
               for f in files:
@@ -83,6 +93,11 @@ jobs:
                       txt = re.sub(r"compileSdkVersion\s+37", "compileSdkVersion 36", txt)
                       txt = re.sub(r"targetSdk\s*=\s*37", "targetSdk = 36", txt)
                       txt = re.sub(r"targetSdkVersion\s+37", "targetSdkVersion 36", txt)
+                      # Replace any hardcoded Amethyst / Amethyst (Debug) / Amethyst Debug in build.gradle
+                      txt = re.sub(r'Amethyst\s*\(Debug\)', 'NovaLauncher', txt, flags=re.IGNORECASE)
+                      txt = re.sub(r'Amethyst\s+Debug', 'NovaLauncher', txt, flags=re.IGNORECASE)
+                      txt = re.sub(r'"Amethyst"', '"NovaLauncher"', txt)
+                      txt = re.sub(r'"PojavLauncher"', '"NovaLauncher"', txt)
                       if "app_pojavlauncher" in p and "AarMetadata" not in txt:
                           txt += "\n\ntasks.configureEach { task ->\n    if (task.name.contains(\"AarMetadata\")) {\n        task.enabled = false\n    }\n}\n"
                       with open(p, "w", encoding="utf-8") as fp:
@@ -97,10 +112,9 @@ jobs:
               manifest_url = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
               with urllib.request.urlopen(manifest_url, timeout=30) as resp:
                   manifest = json.loads(resp.read().decode("utf-8"))
-              targets = {"rd-132211", "1.0"}
               for v in manifest.get("versions", []):
                   vid = v.get("id")
-                  if vid in targets:
+                  if vid in ("rd-132211", "1.0"):
                       vdir = os.path.join(assets_ver_dir, vid)
                       os.makedirs(vdir, exist_ok=True)
                       vjson_path = os.path.join(vdir, f"{vid}.json")
@@ -111,108 +125,68 @@ jobs:
                       vdata = json.loads(vdata_raw.decode("utf-8"))
                       client_url = vdata.get("downloads", {}).get("client", {}).get("url")
                       if client_url:
-                          vjar_path = os.path.join(vdir, f"{vid}.jar")
-                          print(f"Downloading Minecraft {vid} client jar...")
-                          urllib.request.urlretrieve(client_url, vjar_path)
+                          urllib.request.urlretrieve(client_url, os.path.join(vdir, f"{vid}.jar"))
           except Exception as e:
               print("Warning: Could not pre-download version:", e)
 
           # ---------------------------------------------------------
-          # 3. Rename App to NovaLauncher & Update Auth Labels
+          # 3. Rename EVERY XML & Manifest reference from Amethyst/Pojav to NovaLauncher
           # ---------------------------------------------------------
-          res_dir = "app_pojavlauncher/src/main/res"
-          for root, _, files in os.walk(res_dir):
+          for root, _, files in os.walk("app_pojavlauncher/src"):
               for f in files:
-                  if f == "strings.xml":
+                  if f.endswith(".xml"):
                       p = os.path.join(root, f)
                       with open(p, "r", encoding="utf-8", errors="ignore") as fp:
                           txt = fp.read()
-                      txt = re.sub(
-                          r'<string name="app_name"[^>]*>.*?</string>',
-                          '<string name="app_name">NovaLauncher</string>',
-                          txt,
-                          flags=re.DOTALL
-                      )
-                      txt = re.sub(
-                          r'<string name="app_short_name"[^>]*>.*?</string>',
-                          '<string name="app_short_name">NovaLauncher</string>',
-                          txt,
-                          flags=re.DOTALL
-                      )
-                      with open(p, "w", encoding="utf-8") as fp:
-                          fp.write(txt)
-
-          manifest_file = "app_pojavlauncher/src/main/AndroidManifest.xml"
-          if os.path.exists(manifest_file):
-              with open(manifest_file, "r", encoding="utf-8", errors="ignore") as fp:
-                  mtxt = fp.read()
-              mtxt = mtxt.replace("Amethyst", "NovaLauncher").replace("PojavLauncher", "NovaLauncher")
-              with open(manifest_file, "w", encoding="utf-8") as fp:
-                  fp.write(mtxt)
+                      orig = txt
+                      txt = re.sub(r'<string name="app_name"[^>]*>.*?</string>', '<string name="app_name">NovaLauncher</string>', txt, flags=re.DOTALL)
+                      txt = re.sub(r'<string name="app_short_name"[^>]*>.*?</string>', '<string name="app_short_name">NovaLauncher</string>', txt, flags=re.DOTALL)
+                      txt = re.sub(r'Amethyst\s*\(Debug\)', 'NovaLauncher', txt, flags=re.IGNORECASE)
+                      txt = re.sub(r'Amethyst\s+Debug', 'NovaLauncher', txt, flags=re.IGNORECASE)
+                      txt = re.sub(r'Angel\s*Aura\s*Amethyst', 'NovaLauncher', txt, flags=re.IGNORECASE)
+                      txt = txt.replace(">Amethyst<", ">NovaLauncher<").replace(">PojavLauncher<", ">NovaLauncher<")
+                      if f == "AndroidManifest.xml":
+                          txt = re.sub(r'android:label="[^"]*"', 'android:label="NovaLauncher"', txt)
+                      if txt != orig:
+                          with open(p, "w", encoding="utf-8") as fp:
+                              fp.write(txt)
 
           # ---------------------------------------------------------
-          # 4. Minimal Material 3 Dark Theme Palette & Shapes
+          # 4. Overhaul XML Colors, Drawables & Layouts to Material 3 Deep Indigo
           # ---------------------------------------------------------
           m3_colors = {
-              "background_app": "#0E141B",
-              "background_bottom_bar": "#161F2B",
-              "background_status_bar": "#0A0F15",
-              "background_overlay": "#182230",
-              "primary_text": "#E2E8F0",
+              "background_app": "#090D16",
+              "background_bottom_bar": "#111827",
+              "background_status_bar": "#060911",
+              "background_overlay": "#1E293B",
+              "primary_text": "#F8FAFC",
               "secondary_text": "#94A3B8",
               "control_button_color": "#1E293B",
-              "control_button_pressed_color": "#3B82F6",
-              "divider": "#263345",
-              "minebutton_color": "#2563EB",
+              "control_button_pressed_color": "#6366F1",
+              "divider": "#1E293B",
+              "minebutton_color": "#4F46E5",
           }
-          for root, _, files in os.walk(res_dir):
+          for root, _, files in os.walk("app_pojavlauncher/src/main/res"):
               for f in files:
+                  p = os.path.join(root, f)
                   if f == "colors.xml":
-                      p = os.path.join(root, f)
                       with open(p, "r", encoding="utf-8", errors="ignore") as fp:
                           ctxt = fp.read()
                       for k, hexval in m3_colors.items():
-                          ctxt = re.sub(
-                              rf'(<color name="{k}">).*?(</color>)',
-                              rf'\g<1>{hexval}\g<2>',
-                              ctxt
-                          )
+                          ctxt = re.sub(rf'(<color name="{k}">).*?(</color>)', rf'\g<1>{hexval}\g<2>', ctxt)
                       with open(p, "w", encoding="utf-8") as fp:
                           fp.write(ctxt)
-                  elif root.endswith("drawable") and f.endswith(".xml"):
-                      p = os.path.join(root, f)
+                  elif f.endswith(".xml") and ("drawable" in root or "layout" in root):
                       with open(p, "r", encoding="utf-8", errors="ignore") as fp:
-                          dtxt = fp.read()
-                      dtxt = re.sub(r'android:radius="[1-9]dp"', 'android:radius="18dp"', dtxt)
+                          xtxt = fp.read()
+                      xtxt = re.sub(r'android:radius="[0-9]+dp"', 'android:radius="20dp"', xtxt)
+                      xtxt = re.sub(r'#[0-2][0-9a-fA-F]{5}\b', '#111827', xtxt)
                       with open(p, "w", encoding="utf-8") as fp:
-                          fp.write(dtxt)
+                          fp.write(xtxt)
 
           # ---------------------------------------------------------
-          # 5. Allow Microsoft Bedrock Accounts & Remove Demo Lock
+          # 5. Patch MicrosoftBackgroundLogin & MinecraftAccount to Fetch REAL Xbox/Bedrock Gamertag
           # ---------------------------------------------------------
-          def wrap_method(src, sig_pattern, catch_code):
-              m = re.search(sig_pattern, src)
-              if not m:
-                  return src
-              brace_start = src.find("{", m.end() - 1)
-              if brace_start == -1:
-                  return src
-              depth = 0
-              end = -1
-              for i in range(brace_start, len(src)):
-                  if src[i] == "{":
-                      depth += 1
-                  elif src[i] == "}":
-                      depth -= 1
-                      if depth == 0:
-                          end = i
-                          break
-              if end == -1:
-                  return src
-              body = src[brace_start + 1:end]
-              patched = f"\n        try {{\n{body}\n        }} catch (Throwable _novaIgnore) {{\n            {catch_code}\n        }}\n    "
-              return src[:brace_start + 1] + patched + src[end:]
-
           java_root = "app_pojavlauncher/src/main/java"
           for root, _, files in os.walk(java_root):
               for f in files:
@@ -220,31 +194,93 @@ jobs:
                       p = os.path.join(root, f)
                       with open(p, "r", encoding="utf-8", errors="ignore") as fp:
                           jtxt = fp.read()
+
+                      # Force doesOwnGame = true everywhere
                       jtxt = jtxt.replace("public boolean doesOwnGame;", "public boolean doesOwnGame = true;")
                       jtxt = jtxt.replace("doesOwnGame = false;", "doesOwnGame = true;")
-                      jtxt = wrap_method(
-                          jtxt,
-                          r"void\s+checkMcProfile\s*\([^)]*\)\s*(?:throws\s+[^{]+)?\{",
-                          'this.doesOwnGame = true;\n            if (this.mcName == null || this.mcName.isEmpty()) this.mcName = "BedrockPlayer";\n            if (this.mcUuid == null || this.mcUuid.isEmpty()) this.mcUuid = java.util.UUID.nameUUIDFromBytes(("OfflinePlayer:" + this.mcName).getBytes()).toString().replace("-", "");'
+                      jtxt = jtxt.replace("doesOwnGame = false", "doesOwnGame = true")
+
+                      # Replace any hardcoded "Player" or "Demo" fallback string in MicrosoftBackgroundLogin
+                      jtxt = re.sub(
+                          r'mcName\s*=\s*"Player"\s*;',
+                          'mcName = net.kdt.pojavlaunch.NovaModMenu.getResolvedGamertag();',
+                          jtxt
                       )
-                      jtxt = wrap_method(
-                          jtxt,
-                          r"void\s+checkMcStore\s*\([^)]*\)\s*(?:throws\s+[^{]+)?\{",
-                          "this.doesOwnGame = true;"
+                      jtxt = re.sub(
+                          r'mcName\s*=\s*"Demo[^"]*"\s*;',
+                          'mcName = net.kdt.pojavlaunch.NovaModMenu.getResolvedGamertag();',
+                          jtxt
                       )
-                      jtxt = wrap_method(
+
+                      # Hook acquireXsts(String xblToken) to fetch real Xbox Gamertag (gtg) from Xbox Live
+                      jtxt = re.sub(
+                          r'(acquireXsts\s*\(\s*String\s+([a-zA-Z0-9_]+)\s*\)\s*(?:throws\s+[^{]+)?\{)',
+                          r'\1\n        net.kdt.pojavlaunch.NovaModMenu.captureXboxGamertag(\2);',
                           jtxt,
-                          r"void\s+fetchOwnedItems\s*\([^)]*\)\s*(?:throws\s+[^{]+)?\{",
-                          "this.doesOwnGame = true;"
+                          count=1
                       )
-                      jtxt = wrap_method(
-                          jtxt,
-                          r"String\s+acquireMinecraftToken\s*\([^)]*\)\s*(?:throws\s+[^{]+)?\{",
-                          'this.doesOwnGame = true;\n            return "nova_bedrock_session_token";'
-                      )
+
+                      # Wrap checkMcProfile so if Bedrock account returns 404 or sets "Player", we assign the real Xbox Gamertag
+                      m = re.search(r"void\s+checkMcProfile\s*\(\s*String\s+([a-zA-Z0-9_]+)\s*\)\s*(?:throws\s+[^{]+)?\{", jtxt)
+                      if m:
+                          brace_start = jtxt.find("{", m.end() - 1)
+                          depth = 0
+                          end = -1
+                          for i in range(brace_start, len(jtxt)):
+                              if jtxt[i] == "{":
+                                  depth += 1
+                              elif jtxt[i] == "}":
+                                  depth -= 1
+                                  if depth == 0:
+                                      end = i
+                                      break
+                          if end != -1:
+                              body = jtxt[brace_start + 1:end]
+                              replacement = f"""
+        try {{
+{body}
+        }} catch (Throwable _novaErr) {{
+            this.doesOwnGame = true;
+        }}
+        this.doesOwnGame = true;
+        if (this.mcName == null || this.mcName.isEmpty() || this.mcName.equalsIgnoreCase("Player") || this.mcName.toLowerCase().contains("demo")) {{
+            this.mcName = net.kdt.pojavlaunch.NovaModMenu.getResolvedGamertag();
+        }}
+        if (this.mcUuid == null || this.mcUuid.isEmpty() || this.mcUuid.equals("00000000-0000-0000-0000-000000000000")) {{
+            this.mcUuid = java.util.UUID.nameUUIDFromBytes(("OfflinePlayer:" + this.mcName).getBytes()).toString().replace("-", "");
+        }}
+"""
+                              jtxt = jtxt[:brace_start + 1] + replacement + jtxt[end:]
+
+                      # Also wrap acquireMinecraftToken in case XSTS token isn't accepted by Java services
+                      m2 = re.search(r"String\s+acquireMinecraftToken\s*\([^)]*\)\s*(?:throws\s+[^{]+)?\{", jtxt)
+                      if m2:
+                          brace_start = jtxt.find("{", m2.end() - 1)
+                          depth = 0
+                          end = -1
+                          for i in range(brace_start, len(jtxt)):
+                              if jtxt[i] == "{":
+                                  depth += 1
+                              elif jtxt[i] == "}":
+                                  depth -= 1
+                                  if depth == 0:
+                                      end = i
+                                      break
+                          if end != -1:
+                              body = jtxt[brace_start + 1:end]
+                              replacement = f"""
+        try {{
+{body}
+        }} catch (Throwable _novaTokenErr) {{
+            this.doesOwnGame = true;
+            return "0";
+        }}
+"""
+                              jtxt = jtxt[:brace_start + 1] + replacement + jtxt[end:]
+
                       with open(p, "w", encoding="utf-8") as fp:
                           fp.write(jtxt)
-                      print("Patched MicrosoftBackgroundLogin.java for Bedrock/Microsoft login support.")
+                      print("Patched MicrosoftBackgroundLogin.java with real Xbox Live Gamertag (gtg) extractor.")
 
                   elif f == "MinecraftAccount.java":
                       p = os.path.join(root, f)
@@ -255,12 +291,18 @@ jobs:
                           "public boolean isDemo() { return false; }",
                           atxt
                       )
+                      # Ensure parse/load fixes "Player" or "Demo" to the resolved Xbox Gamertag
+                      atxt = re.sub(
+                          r"(public\s+static\s+MinecraftAccount\s+load\s*\([^)]*\)\s*\{)",
+                          r"\1\n        net.kdt.pojavlaunch.NovaModMenu.sanitizeAccountsDir();",
+                          atxt,
+                          count=1
+                      )
                       with open(p, "w", encoding="utf-8") as fp:
                           fp.write(atxt)
-                      print("Patched MinecraftAccount.java to remove Demo mode restrictions.")
 
           # ---------------------------------------------------------
-          # 6. Inject NovaModMenu.java & Hook Activities
+          # 6. Write NovaModMenu.java (Real Xbox Gamertag Resolver + Material 3 Engine + Modrinth Mod Browser)
           # ---------------------------------------------------------
           nova_mod_menu_path = "app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/NovaModMenu.java"
           nova_mod_menu_code = r'''package net.kdt.pojavlaunch;
@@ -272,18 +314,31 @@ jobs:
           import android.content.res.AssetManager;
           import android.graphics.Color;
           import android.graphics.Typeface;
+          import android.graphics.drawable.ColorDrawable;
           import android.graphics.drawable.GradientDrawable;
+          import android.os.Build;
+          import android.text.TextUtils;
           import android.view.Gravity;
           import android.view.MotionEvent;
           import android.view.View;
           import android.view.ViewGroup;
+          import android.view.ViewTreeObserver;
+          import android.view.Window;
+          import android.widget.ArrayAdapter;
           import android.widget.Button;
-          import android.widget.CheckBox;
+          import android.widget.EditText;
           import android.widget.FrameLayout;
+          import android.widget.ImageButton;
+          import android.widget.ImageView;
           import android.widget.LinearLayout;
+          import android.widget.ProgressBar;
           import android.widget.ScrollView;
+          import android.widget.Spinner;
           import android.widget.TextView;
           import android.widget.Toast;
+
+          import org.json.JSONArray;
+          import org.json.JSONObject;
 
           import java.io.BufferedReader;
           import java.io.File;
@@ -291,193 +346,785 @@ jobs:
           import java.io.FileReader;
           import java.io.FileWriter;
           import java.io.InputStream;
-          import java.util.ArrayList;
-          import java.util.List;
+          import java.io.InputStreamReader;
+          import java.io.OutputStream;
+          import java.net.HttpURLConnection;
+          import java.net.URL;
+          import java.net.URLEncoder;
+          import java.nio.charset.StandardCharsets;
+          import java.util.UUID;
 
           public class NovaModMenu {
-              private static final String PREFS_NAME = "nova_mod_menu_prefs";
+              private static final String PREFS_NAME = "nova_launcher_m3_prefs";
+              public static volatile String lastXboxGamertag = null;
+              private static volatile Context appContext = null;
 
               public static void attach(final Activity activity) {
                   if (activity == null) return;
+                  appContext = activity.getApplicationContext();
+                  activity.setTitle("NovaLauncher");
+
+                  SharedPreferences prefs = activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                  String savedTag = prefs.getString("xbox_gamertag", null);
+                  if (savedTag != null && !savedTag.isEmpty()) {
+                      lastXboxGamertag = savedTag;
+                  }
+
                   new Thread(new Runnable() {
                       @Override
                       public void run() {
+                          sanitizeAccountsDir();
                           extractPreloadedVersions(activity, false);
-                          ensureDefaultAccount(activity);
-                          applyOptionsTxtMods(activity);
                       }
                   }).start();
 
-                  activity.getWindow().getDecorView().post(new Runnable() {
+                  applyMaterial3Window(activity);
+
+                  final View decor = activity.getWindow().getDecorView();
+                  decor.post(new Runnable() {
                       @Override
                       public void run() {
-                          attachFloatingButton(activity);
+                          applyMaterial3ViewTree(activity, decor);
+                          attachFloatingBar(activity);
+                      }
+                  });
+
+                  decor.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
+                      @Override
+                      public void onGlobalLayout() {
+                          applyMaterial3ViewTree(activity, decor);
                       }
                   });
               }
 
-              private static void attachFloatingButton(final Activity activity) {
+              // -------------------------------------------------------------------
+              // REAL XBOX LIVE / BEDROCK GAMERTAG FETCHING (via xsts.auth.xboxlive.com)
+              // -------------------------------------------------------------------
+              public static void captureXboxGamertag(String xblToken) {
+                  if (xblToken == null || xblToken.isEmpty()) return;
+                  HttpURLConnection conn = null;
+                  try {
+                      URL url = new URL("https://xsts.auth.xboxlive.com/xsts/authorize");
+                      conn = (HttpURLConnection) url.openConnection();
+                      conn.setRequestMethod("POST");
+                      conn.setConnectTimeout(15000);
+                      conn.setReadTimeout(15000);
+                      conn.setRequestProperty("Content-Type", "application/json");
+                      conn.setRequestProperty("Accept", "application/json");
+                      conn.setRequestProperty("x-xbl-contract-version", "1");
+                      conn.setDoOutput(true);
+
+                      JSONObject props = new JSONObject();
+                      props.put("SandboxId", "RETAIL");
+                      JSONArray userTokens = new JSONArray();
+                      userTokens.put(xblToken);
+                      props.put("UserTokens", userTokens);
+
+                      JSONObject payload = new JSONObject();
+                      payload.put("Properties", props);
+                      payload.put("RelyingParty", "http://xboxlive.com");
+                      payload.put("TokenType", "JWT");
+
+                      byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
+                      OutputStream os = conn.getOutputStream();
+                      os.write(body);
+                      os.close();
+
+                      if (conn.getResponseCode() >= 200 && conn.getResponseCode() < 300) {
+                          BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
+                          StringBuilder sb = new StringBuilder();
+                          String line;
+                          while ((line = br.readLine()) != null) sb.append(line);
+                          br.close();
+
+                          JSONObject resp = new JSONObject(sb.toString());
+                          JSONObject claims = resp.optJSONObject("DisplayClaims");
+                          if (claims != null) {
+                              JSONArray xui = claims.optJSONArray("xui");
+                              if (xui != null && xui.length() > 0) {
+                                  JSONObject first = xui.getJSONObject(0);
+                                  String gtg = first.optString("gtg", "");
+                                  if (gtg.isEmpty()) gtg = first.optString("mgt", "");
+                                  if (!gtg.isEmpty()) {
+                                      lastXboxGamertag = gtg;
+                                      if (appContext != null) {
+                                          appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                                                  .edit().putString("xbox_gamertag", gtg).apply();
+                                      }
+                                      sanitizeAccountsDir();
+                                  }
+                              }
+                          }
+                      }
+                  } catch (Throwable ignored) {
+                  } finally {
+                      if (conn != null) conn.disconnect();
+                  }
+              }
+
+              public static String getResolvedGamertag() {
+                  if (lastXboxGamertag != null && !lastXboxGamertag.isEmpty() && !lastXboxGamertag.equalsIgnoreCase("Player")) {
+                      return lastXboxGamertag;
+                  }
+                  if (appContext != null) {
+                      String saved = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("xbox_gamertag", null);
+                      if (saved != null && !saved.isEmpty() && !saved.equalsIgnoreCase("Player")) {
+                          return saved;
+                      }
+                  }
+                  return "BedrockPlayer";
+              }
+
+              public static void sanitizeAccountsDir() {
+                  try {
+                      if (appContext == null) return;
+                      File accDir = new File(appContext.getFilesDir(), "accounts");
+                      if (!accDir.exists()) return;
+                      File[] files = accDir.listFiles();
+                      if (files == null) return;
+
+                      String realTag = getResolvedGamertag();
+                      for (File f : files) {
+                          if (!f.getName().endsWith(".json")) continue;
+                          if (f.getName().equalsIgnoreCase("NovaPlayer.json")) {
+                              f.delete();
+                              continue;
+                          }
+                          BufferedReader br = new BufferedReader(new FileReader(f));
+                          StringBuilder sb = new StringBuilder();
+                          String l;
+                          while ((l = br.readLine()) != null) sb.append(l);
+                          br.close();
+
+                          JSONObject obj = new JSONObject(sb.toString());
+                          String uname = obj.optString("username", "");
+                          if (uname.equalsIgnoreCase("Player") || uname.toLowerCase().contains("demo") || uname.equalsIgnoreCase("NovaPlayer")) {
+                              if (!realTag.equals("BedrockPlayer")) {
+                                  obj.put("username", realTag);
+                                  obj.put("profileId", UUID.nameUUIDFromBytes(("OfflinePlayer:" + realTag).getBytes()).toString().replace("-", ""));
+                                  File newFile = new File(accDir, realTag + ".json");
+                                  FileWriter fw = new FileWriter(newFile, false);
+                                  fw.write(obj.toString(2));
+                                  fw.close();
+                                  if (!f.getName().equals(newFile.getName())) {
+                                      f.delete();
+                                  }
+                              } else {
+                                  f.delete();
+                              }
+                          }
+                      }
+                  } catch (Throwable ignored) {}
+              }
+
+              // -------------------------------------------------------------------
+              // LIVE MATERIAL 3 DEEP INDIGO UI TRANSFORMATION ENGINE
+              // -------------------------------------------------------------------
+              private static void applyMaterial3Window(Activity activity) {
+                  try {
+                      Window w = activity.getWindow();
+                      w.setBackgroundDrawable(new ColorDrawable(Color.parseColor("#090D16")));
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                          w.setStatusBarColor(Color.parseColor("#060911"));
+                          w.setNavigationBarColor(Color.parseColor("#090D16"));
+                      }
+                  } catch (Throwable ignored) {}
+              }
+
+              private static void applyMaterial3ViewTree(Activity activity, View root) {
+                  if (root == null) return;
+                  try {
+                      if (root.getTag() != null && root.getTag().toString().startsWith("NOVA_")) {
+                          return;
+                      }
+
+                      if (root instanceof TextView) {
+                          TextView tv = (TextView) root;
+                          CharSequence cs = tv.getText();
+                          if (cs != null) {
+                              String s = cs.toString();
+                              if (s.contains("Amethyst (Debug)") || s.contains("Amethyst Debug") || s.equals("Amethyst") || s.equals("PojavLauncher")) {
+                                  tv.setText("NovaLauncher");
+                              } else if (s.equalsIgnoreCase("Player") || s.equalsIgnoreCase("Demo Player")) {
+                                  String real = getResolvedGamertag();
+                                  if (!real.equals("BedrockPlayer")) {
+                                      tv.setText(real);
+                                  }
+                              }
+                          }
+                      }
+
+                      if (root instanceof Button) {
+                          Button btn = (Button) root;
+                          String label = btn.getText() != null ? btn.getText().toString().toLowerCase() : "";
+                          GradientDrawable gd = new GradientDrawable();
+                          gd.setCornerRadius(dp(activity, 22));
+                          if (label.contains("play") || label.contains("launch") || btn.getClass().getSimpleName().contains("MineButton")) {
+                              gd.setColor(Color.parseColor("#6366F1"));
+                              gd.setStroke(dp(activity, 1), Color.parseColor("#818CF8"));
+                              btn.setTextColor(Color.WHITE);
+                          } else {
+                              gd.setColor(Color.parseColor("#1E293B"));
+                              gd.setStroke(dp(activity, 1), Color.parseColor("#334155"));
+                              btn.setTextColor(Color.parseColor("#F1F5F9"));
+                          }
+                          btn.setBackground(gd);
+                          btn.setAllCaps(false);
+                      } else if (root instanceof EditText) {
+                          EditText et = (EditText) root;
+                          GradientDrawable gd = new GradientDrawable();
+                          gd.setCornerRadius(dp(activity, 16));
+                          gd.setColor(Color.parseColor("#0F172A"));
+                          gd.setStroke(dp(activity, 1), Color.parseColor("#475569"));
+                          et.setBackground(gd);
+                          et.setTextColor(Color.parseColor("#F8FAFC"));
+                      } else if (root instanceof Spinner) {
+                          GradientDrawable gd = new GradientDrawable();
+                          gd.setCornerRadius(dp(activity, 16));
+                          gd.setColor(Color.parseColor("#1E293B"));
+                          gd.setStroke(dp(activity, 1), Color.parseColor("#334155"));
+                          root.setBackground(gd);
+                      }
+
+                      if (root instanceof ViewGroup) {
+                          ViewGroup vg = (ViewGroup) root;
+                          String idName = "";
+                          try {
+                              if (vg.getId() != View.NO_ID) {
+                                  idName = activity.getResources().getResourceEntryName(vg.getId());
+                              }
+                          } catch (Throwable ignored) {}
+                          if (idName.contains("bar") || idName.contains("menu") || idName.contains("toolbar") || idName.contains("header")) {
+                              vg.setBackgroundColor(Color.parseColor("#0F172A"));
+                          }
+                          for (int i = 0; i < vg.getChildCount(); i++) {
+                              applyMaterial3ViewTree(activity, vg.getChildAt(i));
+                          }
+                      }
+                  } catch (Throwable ignored) {}
+              }
+
+              // -------------------------------------------------------------------
+              // FLOATING MATERIAL 3 BAR: NOVA MODS (MODRINTH) + GAMERTAG SETTER
+              // -------------------------------------------------------------------
+              private static void attachFloatingBar(final Activity activity) {
                   View root = activity.getWindow().getDecorView();
                   if (!(root instanceof ViewGroup)) return;
                   ViewGroup vg = (ViewGroup) root;
-                  if (vg.findViewWithTag("NOVA_MOD_BTN") != null) return;
+                  if (vg.findViewWithTag("NOVA_M3_BAR") != null) return;
 
-                  final TextView pill = new TextView(activity);
-                  pill.setTag("NOVA_MOD_BTN");
-                  pill.setText("✦ Nova Mods");
-                  pill.setTextColor(Color.parseColor("#0E141B"));
-                  pill.setTextSize(13f);
-                  pill.setTypeface(Typeface.DEFAULT_BOLD);
-                  int padH = dp(activity, 14);
-                  int padV = dp(activity, 8);
-                  pill.setPadding(padH, padV, padH, padV);
+                  LinearLayout bar = new LinearLayout(activity);
+                  bar.setTag("NOVA_M3_BAR");
+                  bar.setOrientation(LinearLayout.HORIZONTAL);
+                  bar.setGravity(Gravity.CENTER_VERTICAL);
+                  int padH = dp(activity, 12);
+                  int padV = dp(activity, 6);
+                  bar.setPadding(padH, padV, padH, padV);
 
-                  GradientDrawable bg = new GradientDrawable();
-                  bg.setColor(Color.parseColor("#A8C7FA"));
-                  bg.setCornerRadius(dp(activity, 24));
-                  bg.setStroke(dp(activity, 1), Color.parseColor("#E2E8F0"));
-                  pill.setBackground(bg);
-                  pill.setElevation(dp(activity, 8));
+                  GradientDrawable barBg = new GradientDrawable();
+                  barBg.setColor(Color.parseColor("#E6111827"));
+                  barBg.setCornerRadius(dp(activity, 28));
+                  barBg.setStroke(dp(activity, 1), Color.parseColor("#6366F1"));
+                  bar.setBackground(barBg);
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                      bar.setElevation(dp(activity, 10));
+                  }
 
-                  final FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                  TextView badge = new TextView(activity);
+                  badge.setTag("NOVA_BADGE");
+                  badge.setText("NovaLauncher");
+                  badge.setTextColor(Color.parseColor("#A5B4FC"));
+                  badge.setTypeface(Typeface.DEFAULT_BOLD);
+                  badge.setTextSize(12f);
+                  badge.setPadding(dp(activity, 4), 0, dp(activity, 10), 0);
+                  bar.addView(badge);
+
+                  TextView modsBtn = createPillButton(activity, "✦ Minecraft Mods", "#6366F1", "#FFFFFF");
+                  modsBtn.setOnClickListener(new View.OnClickListener() {
+                      @Override
+                      public void onClick(View v) {
+                          showModrinthDialog(activity);
+                      }
+                  });
+                  bar.addView(modsBtn);
+
+                  TextView userBtn = createPillButton(activity, "👤 Set Gamertag", "#1E293B", "#E2E8F0");
+                  LinearLayout.LayoutParams ulp = new LinearLayout.LayoutParams(
+                          ViewGroup.LayoutParams.WRAP_CONTENT,
+                          ViewGroup.LayoutParams.WRAP_CONTENT
+                  );
+                  ulp.leftMargin = dp(activity, 6);
+                  userBtn.setLayoutParams(ulp);
+                  userBtn.setOnClickListener(new View.OnClickListener() {
+                      @Override
+                      public void onClick(View v) {
+                          showGamertagDialog(activity);
+                      }
+                  });
+                  bar.addView(userBtn);
+
+                  FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                           ViewGroup.LayoutParams.WRAP_CONTENT,
                           ViewGroup.LayoutParams.WRAP_CONTENT,
                           Gravity.TOP | Gravity.END
                   );
-                  lp.topMargin = dp(activity, 42);
-                  lp.rightMargin = dp(activity, 18);
+                  lp.topMargin = dp(activity, 36);
+                  lp.rightMargin = dp(activity, 16);
 
-                  pill.setOnTouchListener(new View.OnTouchListener() {
-                      float dX, dY, startX, startY;
+                  bar.setOnTouchListener(new View.OnTouchListener() {
+                      float dX, dY;
                       @Override
                       public boolean onTouch(View v, MotionEvent event) {
                           switch (event.getActionMasked()) {
                               case MotionEvent.ACTION_DOWN:
-                                  startX = event.getRawX();
-                                  startY = event.getRawY();
-                                  dX = v.getX() - startX;
-                                  dY = v.getY() - startY;
+                                  dX = v.getX() - event.getRawX();
+                                  dY = v.getY() - event.getRawY();
                                   return true;
                               case MotionEvent.ACTION_MOVE:
                                   v.setX(event.getRawX() + dX);
                                   v.setY(event.getRawY() + dY);
-                                  return true;
-                              case MotionEvent.ACTION_UP:
-                                  if (Math.hypot(event.getRawX() - startX, event.getRawY() - startY) < dp(activity, 10)) {
-                                      showModDialog(activity);
-                                  }
                                   return true;
                           }
                           return false;
                       }
                   });
 
-                  vg.addView(pill, lp);
+                  vg.addView(bar, lp);
               }
 
-              private static void showModDialog(final Activity activity) {
-                  final SharedPreferences prefs = activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+              private static TextView createPillButton(Context ctx, String text, String bgHex, String fgHex) {
+                  TextView tv = new TextView(ctx);
+                  tv.setTag("NOVA_PILL");
+                  tv.setText(text);
+                  tv.setTextColor(Color.parseColor(fgHex));
+                  tv.setTextSize(12f);
+                  tv.setTypeface(Typeface.DEFAULT_BOLD);
+                  tv.setPadding(dp(ctx, 12), dp(ctx, 6), dp(ctx, 12), dp(ctx, 6));
+                  GradientDrawable gd = new GradientDrawable();
+                  gd.setColor(Color.parseColor(bgHex));
+                  gd.setCornerRadius(dp(ctx, 20));
+                  tv.setBackground(gd);
+                  return tv;
+              }
 
-                  ScrollView scroll = new ScrollView(activity);
-                  LinearLayout container = new LinearLayout(activity);
-                  container.setOrientation(LinearLayout.VERTICAL);
-                  int pad = dp(activity, 20);
-                  container.setPadding(pad, pad, pad, pad);
-                  container.setBackgroundColor(Color.parseColor("#161F2B"));
-                  scroll.addView(container);
+              // -------------------------------------------------------------------
+              // GAMERTAG / BEDROCK ACCOUNT FIXER DIALOG
+              // -------------------------------------------------------------------
+              private static void showGamertagDialog(final Activity activity) {
+                  LinearLayout root = new LinearLayout(activity);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  int p = dp(activity, 20);
+                  root.setPadding(p, p, p, p);
+                  root.setBackgroundColor(Color.parseColor("#0F172A"));
 
                   TextView title = new TextView(activity);
-                  title.setText("NovaLauncher • Material 3 Mod Menu");
-                  title.setTextColor(Color.parseColor("#A8C7FA"));
+                  title.setText("Xbox / Bedrock Gamertag");
+                  title.setTextColor(Color.parseColor("#F8FAFC"));
                   title.setTextSize(18f);
                   title.setTypeface(Typeface.DEFAULT_BOLD);
-                  container.addView(title);
+                  root.addView(title);
 
                   TextView sub = new TextView(activity);
-                  sub.setText("Bedrock Microsoft Auth Unlocked • Preloaded MC Ready");
+                  sub.setText("If you logged in before the Xbox Gamertag patch and it saved as 'Player', enter your Xbox Gamertag below or re-login with Microsoft to auto-fetch it.");
                   sub.setTextColor(Color.parseColor("#94A3B8"));
                   sub.setTextSize(12f);
-                  sub.setPadding(0, dp(activity, 4), 0, dp(activity, 14));
-                  container.addView(sub);
+                  sub.setPadding(0, dp(activity, 6), 0, dp(activity, 12));
+                  root.addView(sub);
 
-                  addToggle(activity, container, prefs, "mod_fps_boost", "FPS Boost & G1GC RAM Optimizer", true);
-                  addToggle(activity, container, prefs, "mod_fullbright", "Fullbright (Max Gamma 100.0)", true);
-                  addToggle(activity, container, prefs, "mod_quake_fov", "Quake Pro Wide FOV (110°)", false);
-                  addToggle(activity, container, prefs, "mod_potato", "Potato Boost (Disable Clouds/Particles/VSync)", false);
-                  addToggle(activity, container, prefs, "mod_debug_hud", "Advanced Item Tooltips & Debug Info", false);
-
-                  TextView modsHeader = new TextView(activity);
-                  modsHeader.setText("Installed .jar Mods (.minecraft/mods)");
-                  modsHeader.setTextColor(Color.parseColor("#E2E8F0"));
-                  modsHeader.setTypeface(Typeface.DEFAULT_BOLD);
-                  modsHeader.setPadding(0, dp(activity, 16), 0, dp(activity, 6));
-                  container.addView(modsHeader);
-
-                  File modsDir = new File(getGameDir(activity), "mods");
-                  if (!modsDir.exists()) modsDir.mkdirs();
-                  File[] modFiles = modsDir.listFiles();
-                  if (modFiles == null || modFiles.length == 0) {
-                      TextView empty = new TextView(activity);
-                      empty.setText("No .jar mods found yet. Drop .jar files into:\n" + modsDir.getAbsolutePath());
-                      empty.setTextColor(Color.parseColor("#94A3B8"));
-                      empty.setTextSize(12f);
-                      container.addView(empty);
-                  } else {
-                      for (final File mf : modFiles) {
-                          if (!mf.getName().endsWith(".jar") && !mf.getName().endsWith(".jar.disabled")) continue;
-                          final CheckBox cb = new CheckBox(activity);
-                          final boolean enabled = mf.getName().endsWith(".jar");
-                          cb.setText(mf.getName().replace(".disabled", ""));
-                          cb.setTextColor(Color.parseColor("#E2E8F0"));
-                          cb.setChecked(enabled);
-                          cb.setOnClickListener(new View.OnClickListener() {
-                              @Override
-                              public void onClick(View v) {
-                                  String clean = mf.getName().replace(".disabled", "");
-                                  File target = new File(mf.getParentFile(), cb.isChecked() ? clean : clean + ".disabled");
-                                  mf.renameTo(target);
-                              }
-                          });
-                          container.addView(cb);
-                      }
-                  }
-
-                  Button reinstallBtn = new Button(activity);
-                  reinstallBtn.setText("Verify / Extract Preloaded MC (rd-132211 & 1.0)");
-                  reinstallBtn.setOnClickListener(new View.OnClickListener() {
-                      @Override
-                      public void onClick(View v) {
-                          new Thread(new Runnable() {
-                              @Override
-                              public void run() {
-                                  extractPreloadedVersions(activity, true);
-                              }
-                          }).start();
-                      }
-                  });
-                  container.addView(reinstallBtn);
+                  final EditText input = new EditText(activity);
+                  input.setHint("Enter your Xbox / Minecraft name");
+                  input.setHintTextColor(Color.parseColor("#64748B"));
+                  input.setTextColor(Color.parseColor("#F8FAFC"));
+                  String current = getResolvedGamertag();
+                  if (!current.equals("BedrockPlayer")) input.setText(current);
+                  root.addView(input);
 
                   new AlertDialog.Builder(activity)
-                          .setView(scroll)
-                          .setPositiveButton("Apply & Save", (d, w) -> {
-                              applyOptionsTxtMods(activity);
-                              Toast.makeText(activity, "Nova Mods applied!", Toast.LENGTH_SHORT).show();
+                          .setView(root)
+                          .setPositiveButton("Save & Apply to Account", (d, w) -> {
+                              String name = input.getText().toString().trim();
+                              if (!name.isEmpty()) {
+                                  lastXboxGamertag = name;
+                                  activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                                          .edit().putString("xbox_gamertag", name).apply();
+                                  createOrUpdateAccountFile(activity, name);
+                                  applyMaterial3ViewTree(activity, activity.getWindow().getDecorView());
+                                  Toast.makeText(activity, "Account updated to: " + name + " (Re-select account in dropdown if needed)", Toast.LENGTH_LONG).show();
+                              }
                           })
+                          .setNegativeButton("Cancel", null)
                           .show();
               }
 
-              private static void addToggle(Context ctx, LinearLayout parent, final SharedPreferences prefs, final String key, String label, boolean defVal) {
-                  final CheckBox cb = new CheckBox(ctx);
-                  cb.setText(label);
-                  cb.setTextColor(Color.parseColor("#E2E8F0"));
-                  cb.setChecked(prefs.getBoolean(key, defVal));
-                  cb.setOnClickListener(new View.OnClickListener() {
+              private static void createOrUpdateAccountFile(Context ctx, String username) {
+                  try {
+                      File accDir = new File(ctx.getFilesDir(), "accounts");
+                      if (!accDir.exists()) accDir.mkdirs();
+                      File[] files = accDir.listFiles();
+                      String uuid = UUID.nameUUIDFromBytes(("OfflinePlayer:" + username).getBytes()).toString().replace("-", "");
+                      boolean updated = false;
+                      if (files != null) {
+                          for (File f : files) {
+                              if (!f.getName().endsWith(".json")) continue;
+                              BufferedReader br = new BufferedReader(new FileReader(f));
+                              StringBuilder sb = new StringBuilder();
+                              String l;
+                              while ((l = br.readLine()) != null) sb.append(l);
+                              br.close();
+                              JSONObject obj = new JSONObject(sb.toString());
+                              obj.put("username", username);
+                              obj.put("profileId", uuid);
+                              File out = new File(accDir, username + ".json");
+                              FileWriter fw = new FileWriter(out, false);
+                              fw.write(obj.toString(2));
+                              fw.close();
+                              if (!f.getName().equals(out.getName())) f.delete();
+                              updated = true;
+                          }
+                      }
+                      if (!updated) {
+                          JSONObject obj = new JSONObject();
+                          obj.put("accessToken", "0");
+                          obj.put("clientToken", "0");
+                          obj.put("profileId", uuid);
+                          obj.put("username", username);
+                          obj.put("selectedVersion", "1.20.1");
+                          obj.put("isMicrosoft", false);
+                          File out = new File(accDir, username + ".json");
+                          FileWriter fw = new FileWriter(out, false);
+                          fw.write(obj.toString(2));
+                          fw.close();
+                      }
+                  } catch (Throwable ignored) {}
+              }
+
+              // -------------------------------------------------------------------
+              // REAL MINECRAFT MODS BROWSER & MODRINTH DOWNLOADER
+              // -------------------------------------------------------------------
+              private static void showModrinthDialog(final Activity activity) {
+                  ScrollView scroll = new ScrollView(activity);
+                  scroll.setBackgroundColor(Color.parseColor("#090D16"));
+
+                  final LinearLayout main = new LinearLayout(activity);
+                  main.setOrientation(LinearLayout.VERTICAL);
+                  int pad = dp(activity, 18);
+                  main.setPadding(pad, pad, pad, pad);
+                  scroll.addView(main);
+
+                  TextView title = new TextView(activity);
+                  title.setText("NovaLauncher • Minecraft Mod Hub");
+                  title.setTextColor(Color.parseColor("#A5B4FC"));
+                  title.setTextSize(19f);
+                  title.setTypeface(Typeface.DEFAULT_BOLD);
+                  main.addView(title);
+
+                  TextView sub = new TextView(activity);
+                  sub.setText("Search & 1-Tap Download Real Minecraft .jar Mods from Modrinth into .minecraft/mods");
+                  sub.setTextColor(Color.parseColor("#94A3B8"));
+                  sub.setTextSize(12f);
+                  sub.setPadding(0, dp(activity, 4), 0, dp(activity, 12));
+                  main.addView(sub);
+
+                  // Version & Loader Row
+                  LinearLayout filterRow = new LinearLayout(activity);
+                  filterRow.setOrientation(LinearLayout.HORIZONTAL);
+
+                  final Spinner verSpinner = new Spinner(activity);
+                  final String[] mcVersions = new String[]{"1.21.4", "1.21.1", "1.20.4", "1.20.1", "1.19.4", "1.19.2", "1.18.2", "1.16.5", "1.12.2"};
+                  ArrayAdapter<String> verAdapter = new ArrayAdapter<>(activity, android.R.layout.simple_spinner_dropdown_item, mcVersions);
+                  verSpinner.setAdapter(verAdapter);
+                  verSpinner.setSelection(3); // default 1.20.1
+
+                  final Spinner loaderSpinner = new Spinner(activity);
+                  final String[] loaders = new String[]{"fabric", "forge", "neoforge", "quilt"};
+                  ArrayAdapter<String> loaderAdapter = new ArrayAdapter<>(activity, android.R.layout.simple_spinner_dropdown_item, loaders);
+                  loaderSpinner.setAdapter(loaderAdapter);
+
+                  LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                  flp.rightMargin = dp(activity, 8);
+                  filterRow.addView(verSpinner, flp);
+                  filterRow.addView(loaderSpinner, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                  main.addView(filterRow);
+
+                  // Search Row
+                  LinearLayout searchRow = new LinearLayout(activity);
+                  searchRow.setOrientation(LinearLayout.HORIZONTAL);
+                  searchRow.setPadding(0, dp(activity, 10), 0, dp(activity, 10));
+
+                  final EditText searchInput = new EditText(activity);
+                  searchInput.setHint("Search mods (e.g. Sodium, JEI, Iris, Waystones)...");
+                  searchInput.setHintTextColor(Color.parseColor("#64748B"));
+                  searchInput.setTextColor(Color.parseColor("#F8FAFC"));
+                  LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                  slp.rightMargin = dp(activity, 8);
+                  searchRow.addView(searchInput, slp);
+
+                  Button searchBtn = new Button(activity);
+                  searchBtn.setText("Search");
+                  searchRow.addView(searchBtn);
+                  main.addView(searchRow);
+
+                  // Results Container
+                  final LinearLayout resultsBox = new LinearLayout(activity);
+                  resultsBox.setOrientation(LinearLayout.VERTICAL);
+                  main.addView(resultsBox);
+
+                  // Installed Mods Header
+                  TextView instHeader = new TextView(activity);
+                  instHeader.setText("Installed Mods in .minecraft/mods");
+                  instHeader.setTextColor(Color.parseColor("#F8FAFC"));
+                  instHeader.setTypeface(Typeface.DEFAULT_BOLD);
+                  instHeader.setTextSize(15f);
+                  instHeader.setPadding(0, dp(activity, 16), 0, dp(activity, 8));
+                  main.addView(instHeader);
+
+                  final LinearLayout installedBox = new LinearLayout(activity);
+                  installedBox.setOrientation(LinearLayout.VERTICAL);
+                  main.addView(installedBox);
+
+                  refreshInstalledModsList(activity, installedBox);
+
+                  View.OnClickListener triggerSearch = new View.OnClickListener() {
                       @Override
                       public void onClick(View v) {
-                          prefs.edit().putBoolean(key, cb.isChecked()).apply();
+                          String q = searchInput.getText().toString().trim();
+                          String ver = (String) verSpinner.getSelectedItem();
+                          String loader = (String) loaderSpinner.getSelectedItem();
+                          searchModrinth(activity, q, ver, loader, resultsBox, installedBox);
                       }
-                  });
-                  parent.addView(cb);
+                  };
+                  searchBtn.setOnClickListener(triggerSearch);
+
+                  // Load popular mods immediately on open
+                  searchModrinth(activity, "", "1.20.1", "fabric", resultsBox, installedBox);
+
+                  new AlertDialog.Builder(activity)
+                          .setView(scroll)
+                          .setPositiveButton("Close", null)
+                          .show();
+              }
+
+              private static void searchModrinth(final Activity activity, final String query, final String mcVer, final String loader, final LinearLayout resultsBox, final LinearLayout installedBox) {
+                  resultsBox.removeAllViews();
+                  TextView loading = new TextView(activity);
+                  loading.setText("Loading Minecraft mods from Modrinth...");
+                  loading.setTextColor(Color.parseColor("#94A3B8"));
+                  resultsBox.addView(loading);
+
+                  new Thread(new Runnable() {
+                      @Override
+                      public void run() {
+                          HttpURLConnection conn = null;
+                          try {
+                              String facets = "[[\"project_type:mod\"],[\"versions:" + mcVer + "\"],[\"categories:" + loader + "\"]]";
+                              String urlStr = "https://api.modrinth.com/v2/search?limit=12&query="
+                                      + URLEncoder.encode(query, "UTF-8")
+                                      + "&facets=" + URLEncoder.encode(facets, "UTF-8");
+                              URL url = new URL(urlStr);
+                              conn = (HttpURLConnection) url.openConnection();
+                              conn.setRequestProperty("User-Agent", "NovaLauncher-Android/1.0");
+                              conn.setConnectTimeout(15000);
+                              conn.setReadTimeout(15000);
+
+                              BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
+                              StringBuilder sb = new StringBuilder();
+                              String l;
+                              while ((l = br.readLine()) != null) sb.append(l);
+                              br.close();
+
+                              JSONObject root = new JSONObject(sb.toString());
+                              final JSONArray hits = root.optJSONArray("hits");
+
+                              activity.runOnUiThread(new Runnable() {
+                                  @Override
+                                  public void run() {
+                                      resultsBox.removeAllViews();
+                                      if (hits == null || hits.length() == 0) {
+                                          TextView none = new TextView(activity);
+                                          none.setText("No mods found for " + loader + " " + mcVer + ". Try another query or version.");
+                                          none.setTextColor(Color.parseColor("#F87171"));
+                                          resultsBox.addView(none);
+                                          return;
+                                      }
+                                      for (int i = 0; i < hits.length(); i++) {
+                                          JSONObject hit = hits.optJSONObject(i);
+                                          if (hit == null) continue;
+                                          final String projId = hit.optString("project_id");
+                                          final String modTitle = hit.optString("title", "Mod");
+                                          final String desc = hit.optString("description", "");
+
+                                          LinearLayout card = new LinearLayout(activity);
+                                          card.setOrientation(LinearLayout.VERTICAL);
+                                          int cp = dp(activity, 12);
+                                          card.setPadding(cp, cp, cp, cp);
+                                          GradientDrawable cbg = new GradientDrawable();
+                                          cbg.setColor(Color.parseColor("#131C2E"));
+                                          cbg.setCornerRadius(dp(activity, 16));
+                                          cbg.setStroke(dp(activity, 1), Color.parseColor("#263554"));
+                                          card.setBackground(cbg);
+                                          LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+                                                  ViewGroup.LayoutParams.MATCH_PARENT,
+                                                  ViewGroup.LayoutParams.WRAP_CONTENT
+                                          );
+                                          clp.bottomMargin = dp(activity, 8);
+                                          card.setLayoutParams(clp);
+
+                                          TextView t = new TextView(activity);
+                                          t.setText(modTitle + "  (" + loader + " • " + mcVer + ")");
+                                          t.setTextColor(Color.parseColor("#F8FAFC"));
+                                          t.setTypeface(Typeface.DEFAULT_BOLD);
+                                          t.setTextSize(14f);
+                                          card.addView(t);
+
+                                          TextView d = new TextView(activity);
+                                          d.setText(desc);
+                                          d.setTextColor(Color.parseColor("#94A3B8"));
+                                          d.setTextSize(12f);
+                                          d.setPadding(0, dp(activity, 4), 0, dp(activity, 8));
+                                          card.addView(d);
+
+                                          final Button dlBtn = new Button(activity);
+                                          dlBtn.setText("⬇ Install Mod (.jar)");
+                                          dlBtn.setOnClickListener(new View.OnClickListener() {
+                                              @Override
+                                              public void onClick(View v) {
+                                                  dlBtn.setEnabled(false);
+                                                  dlBtn.setText("Downloading...");
+                                                  downloadModFromModrinth(activity, projId, modTitle, mcVer, loader, dlBtn, installedBox);
+                                              }
+                                          });
+                                          card.addView(dlBtn);
+                                          resultsBox.addView(card);
+                                      }
+                                  }
+                              });
+                          } catch (final Throwable e) {
+                              activity.runOnUiThread(new Runnable() {
+                                  @Override
+                                  public void run() {
+                                      resultsBox.removeAllViews();
+                                      TextView err = new TextView(activity);
+                                      err.setText("Error contacting Modrinth: " + e.getMessage());
+                                      err.setTextColor(Color.parseColor("#F87171"));
+                                      resultsBox.addView(err);
+                                  }
+                              });
+                          } finally {
+                              if (conn != null) conn.disconnect();
+                          }
+                      }
+                  }).start();
+              }
+
+              private static void downloadModFromModrinth(final Activity activity, final String projectId, final String modTitle, final String mcVer, final String loader, final Button btn, final LinearLayout installedBox) {
+                  new Thread(new Runnable() {
+                      @Override
+                      public void run() {
+                          HttpURLConnection conn = null;
+                          try {
+                              String loadersParam = "[\"" + loader + "\"]";
+                              String versParam = "[\"" + mcVer + "\"]";
+                              String urlStr = "https://api.modrinth.com/v2/project/" + projectId + "/version?loaders="
+                                      + URLEncoder.encode(loadersParam, "UTF-8")
+                                      + "&game_versions=" + URLEncoder.encode(versParam, "UTF-8");
+                              URL url = new URL(urlStr);
+                              conn = (HttpURLConnection) url.openConnection();
+                              conn.setRequestProperty("User-Agent", "NovaLauncher-Android/1.0");
+                              BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
+                              StringBuilder sb = new StringBuilder();
+                              String l;
+                              while ((l = br.readLine()) != null) sb.append(l);
+                              br.close();
+
+                              JSONArray arr = new JSONArray(sb.toString());
+                              if (arr.length() == 0) {
+                                  throw new RuntimeException("No matching file for " + loader + " " + mcVer);
+                              }
+                              JSONObject verObj = arr.getJSONObject(0);
+                              JSONArray files = verObj.getJSONArray("files");
+                              JSONObject fileObj = files.getJSONObject(0);
+                              String dlUrl = fileObj.getString("url");
+                              final String fileName = fileObj.getString("filename");
+
+                              File modsDir = new File(getGameDir(activity), "mods");
+                              if (!modsDir.exists()) modsDir.mkdirs();
+                              File outFile = new File(modsDir, fileName);
+
+                              HttpURLConnection dlConn = (HttpURLConnection) new URL(dlUrl).openConnection();
+                              dlConn.setRequestProperty("User-Agent", "NovaLauncher-Android/1.0");
+                              InputStream is = dlConn.getInputStream();
+                              FileOutputStream fos = new FileOutputStream(outFile);
+                              byte[] buf = new byte[8192];
+                              int r;
+                              while ((r = is.read(buf)) != -1) {
+                                  fos.write(buf, 0, r);
+                              }
+                              fos.close();
+                              is.close();
+                              dlConn.disconnect();
+
+                              activity.runOnUiThread(new Runnable() {
+                                  @Override
+                                  public void run() {
+                                      btn.setText("✓ Installed: " + fileName);
+                                      Toast.makeText(activity, "Installed " + fileName + " into .minecraft/mods!", Toast.LENGTH_LONG).show();
+                                      refreshInstalledModsList(activity, installedBox);
+                                  }
+                              });
+                          } catch (final Throwable e) {
+                              activity.runOnUiThread(new Runnable() {
+                                  @Override
+                                  public void run() {
+                                      btn.setEnabled(true);
+                                      btn.setText("Retry Install");
+                                      Toast.makeText(activity, "Download failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                                  }
+                              });
+                          } finally {
+                              if (conn != null) conn.disconnect();
+                          }
+                      }
+                  }).start();
+              }
+
+              private static void refreshInstalledModsList(final Activity activity, final LinearLayout installedBox) {
+                  installedBox.removeAllViews();
+                  File modsDir = new File(getGameDir(activity), "mods");
+                  if (!modsDir.exists()) modsDir.mkdirs();
+                  File[] files = modsDir.listFiles();
+                  if (files == null || files.length == 0) {
+                      TextView empty = new TextView(activity);
+                      empty.setText("No mods installed yet. Use the search bar above to download mods!");
+                      empty.setTextColor(Color.parseColor("#64748B"));
+                      empty.setTextSize(12f);
+                      installedBox.addView(empty);
+                      return;
+                  }
+                  for (final File f : files) {
+                      if (!f.getName().endsWith(".jar") && !f.getName().endsWith(".disabled")) continue;
+                      LinearLayout row = new LinearLayout(activity);
+                      row.setOrientation(LinearLayout.HORIZONTAL);
+                      row.setGravity(Gravity.CENTER_VERTICAL);
+                      row.setPadding(0, dp(activity, 4), 0, dp(activity, 4));
+
+                      TextView nameTv = new TextView(activity);
+                      nameTv.setText(f.getName());
+                      nameTv.setTextColor(Color.parseColor("#E2E8F0"));
+                      nameTv.setTextSize(12f);
+                      row.addView(nameTv, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+                      Button delBtn = new Button(activity);
+                      delBtn.setText("Delete");
+                      delBtn.setOnClickListener(new View.OnClickListener() {
+                          @Override
+                          public void onClick(View v) {
+                              f.delete();
+                              refreshInstalledModsList(activity, installedBox);
+                          }
+                      });
+                      row.addView(delBtn);
+                      installedBox.addView(row);
+                  }
               }
 
               private static File getGameDir(Context ctx) {
@@ -490,48 +1137,12 @@ jobs:
                   return new File(ext != null ? ext : ctx.getFilesDir(), ".minecraft");
               }
 
-              public static void applyOptionsTxtMods(Context ctx) {
-                  try {
-                      SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                      File gameDir = getGameDir(ctx);
-                      if (!gameDir.exists()) gameDir.mkdirs();
-                      File opts = new File(gameDir, "options.txt");
-                      List<String> lines = new ArrayList<>();
-                      if (opts.exists()) {
-                          BufferedReader br = new BufferedReader(new FileReader(opts));
-                          String l;
-                          while ((l = br.readLine()) != null) {
-                              if (!l.startsWith("gamma:") && !l.startsWith("fov:") && !l.startsWith("enableVsync:")
-                                      && !l.startsWith("renderClouds:") && !l.startsWith("particles:")
-                                      && !l.startsWith("advancedItemTooltips:")) {
-                                  lines.add(l);
-                              }
-                          }
-                          br.close();
-                      }
-                      lines.add("gamma:" + (prefs.getBoolean("mod_fullbright", true) ? "100.0" : "1.0"));
-                      lines.add("fov:" + (prefs.getBoolean("mod_quake_fov", false) ? "1.0" : "0.0"));
-                      if (prefs.getBoolean("mod_potato", false)) {
-                          lines.add("enableVsync:false");
-                          lines.add("renderClouds:false");
-                          lines.add("particles:2");
-                      }
-                      lines.add("advancedItemTooltips:" + prefs.getBoolean("mod_debug_hud", false));
-                      FileWriter fw = new FileWriter(opts, false);
-                      for (String line : lines) {
-                          fw.write(line + "\n");
-                      }
-                      fw.close();
-                  } catch (Throwable ignored) {}
-              }
-
               public static void extractPreloadedVersions(final Activity activity, final boolean notify) {
                   try {
                       AssetManager am = activity.getAssets();
                       String[] vers = am.list("novacraft_versions");
                       if (vers == null || vers.length == 0) return;
-                      File gameDir = getGameDir(activity);
-                      File versionsDir = new File(gameDir, "versions");
+                      File versionsDir = new File(getGameDir(activity), "versions");
                       for (String vid : vers) {
                           File targetVerDir = new File(versionsDir, vid);
                           if (!targetVerDir.exists()) targetVerDir.mkdirs();
@@ -552,37 +1163,6 @@ jobs:
                               }
                           }
                       }
-                      if (notify) {
-                          activity.runOnUiThread(new Runnable() {
-                              @Override
-                              public void run() {
-                                  Toast.makeText(activity, "Preloaded Minecraft (rd-132211 & 1.0) installed in .minecraft/versions!", Toast.LENGTH_LONG).show();
-                              }
-                          });
-                      }
-                  } catch (Throwable ignored) {}
-              }
-
-              public static void ensureDefaultAccount(Context ctx) {
-                  try {
-                      File accDir = new File(ctx.getFilesDir(), "accounts");
-                      if (!accDir.exists()) accDir.mkdirs();
-                      File[] existing = accDir.listFiles();
-                      if (existing == null || existing.length == 0) {
-                          File defAcc = new File(accDir, "NovaPlayer.json");
-                          String json = "{\n"
-                                  + "  \"accessToken\": \"0\",\n"
-                                  + "  \"clientToken\": \"0\",\n"
-                                  + "  \"profileId\": \"00000000-0000-0000-0000-000000000000\",\n"
-                                  + "  \"username\": \"NovaPlayer\",\n"
-                                  + "  \"selectedVersion\": \"1.0\",\n"
-                                  + "  \"isMicrosoft\": false,\n"
-                                  + "  \"expiresAt\": 0\n"
-                                  + "}";
-                          FileWriter fw = new FileWriter(defAcc);
-                          fw.write(json);
-                          fw.close();
-                      }
                   } catch (Throwable ignored) {}
               }
 
@@ -594,7 +1174,7 @@ jobs:
           with open(nova_mod_menu_path, "w", encoding="utf-8") as fp:
               fp.write(nova_mod_menu_code)
 
-          for act_name in ("LauncherActivity.java", "MainActivity.java"):
+          for act_name in ("LauncherActivity.java", "MainActivity.java", "TestStorageActivity.java"):
               for root, _, files in os.walk(java_root):
                   if act_name in files:
                       p = os.path.join(root, act_name)
@@ -612,18 +1192,12 @@ jobs:
                           print(f"Hooked NovaModMenu into {act_name}")
           EOF
 
-      - name: Prepare launcher pre-build assets
+      - name: Build GLFW stub
         working-directory: launcher
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
         run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
-          chmod +x gradlew
-          if [ -f scripts/languagelist_updater.sh ]; then
-            chmod +x scripts/languagelist_updater.sh
-            bash scripts/languagelist_updater.sh
-          fi
           ./gradlew --no-daemon :jre_lwjgl3glfw:build
 
       - name: Build debug APK
