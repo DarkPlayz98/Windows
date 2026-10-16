@@ -5,10 +5,11 @@ import wave
 import json
 import zlib
 import struct
-import shutil
 import urllib.request
 
-# 1. Patch Gradle SDK 36, Disable CheckAarMetadata, and Strip Amethyst/Pojav
+# =========================================================================
+# 1. PATCH GRADLE SDK 36 & DISABLE CheckAarMetadataTask
+# =========================================================================
 for root, _, files in os.walk("."):
     for f in files:
         if f in ("build.gradle", "build.gradle.kts"):
@@ -24,10 +25,6 @@ for root, _, files in os.walk("."):
                 'resValue("string", "app_name", "NovaLauncher")',
                 txt,
             )
-            txt = re.sub(r"Amethyst\s*\(Debug\)", "NovaLauncher", txt, flags=re.IGNORECASE)
-            txt = re.sub(r"Amethyst\s+Debug", "NovaLauncher", txt, flags=re.IGNORECASE)
-            txt = re.sub(r'"Amethyst"', '"NovaLauncher"', txt)
-            txt = re.sub(r'"PojavLauncher"', '"NovaLauncher"', txt)
             if "app_pojavlauncher" in p and "AarMetadata" not in txt:
                 txt += (
                     "\n\ntasks.configureEach { task ->\n"
@@ -40,7 +37,9 @@ for root, _, files in os.walk("."):
                 fp.write(txt)
 
 
-# 2. Generate Custom NovaLauncher Logo PNG & Replace All Icons
+# =========================================================================
+# 2. GENERATE CUSTOM NOVALAUNCHER LOGO PNG SAFELY (NO .webp / .9.png CORRUPTION)
+# =========================================================================
 def make_nova_icon_png(size):
     raw_rows = []
     cx = (size - 1) / 2.0
@@ -100,25 +99,28 @@ def make_nova_icon_png(size):
 icon_192 = make_nova_icon_png(192)
 icon_512 = make_nova_icon_png(512)
 
-for root, dirs, files in os.walk("app_pojavlauncher/src"):
-    if os.path.basename(root).startswith("mipmap-anydpi"):
-        shutil.rmtree(root, ignore_errors=True)
-        continue
+drawable_dir = "app_pojavlauncher/src/main/res/drawable"
+os.makedirs(drawable_dir, exist_ok=True)
+with open(os.path.join(drawable_dir, "nova_app_logo.png"), "wb") as out:
+    out.write(icon_192)
+
+# Only overwrite standard .png launcher icons (never .9.png or .webp)
+for root, _, files in os.walk("app_pojavlauncher/src/main/res"):
     for f in files:
         fl = f.lower()
-        p = os.path.join(root, f)
-        if (fl.endswith(".png") or fl.endswith(".webp")) and (
-            "ic_launcher" in fl or "pojav" in fl or "amethyst" in fl or "logo" in fl
-        ):
-            with open(p, "wb") as out:
-                out.write(icon_192)
+        if fl.endswith(".png") and not fl.endswith(".9.png"):
+            if fl in ("ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png"):
+                with open(os.path.join(root, f), "wb") as out:
+                    out.write(icon_192)
 
 os.makedirs("app_pojavlauncher/src/main/assets", exist_ok=True)
 with open("app_pojavlauncher/src/main/assets/nova_logo.png", "wb") as out:
     out.write(icon_512)
 
 
-# 3. Synthesize 3 Drift Phonk Tracks into assets/nova_phonk/
+# =========================================================================
+# 3. SYNTHESIZE 3 DRIFT PHONK TRACKS INTO assets/nova_phonk/
+# =========================================================================
 phonk_dir = "app_pojavlauncher/src/main/assets/nova_phonk"
 os.makedirs(phonk_dir, exist_ok=True)
 
@@ -186,7 +188,9 @@ generate_phonk_wav(
 )
 
 
-# 4. Pre-download First Minecraft Versions (rd-132211 & 1.0)
+# =========================================================================
+# 4. PRE-DOWNLOAD FIRST MINECRAFT VERSIONS (rd-132211 & 1.0)
+# =========================================================================
 assets_ver_dir = "app_pojavlauncher/src/main/assets/novacraft_versions"
 os.makedirs(assets_ver_dir, exist_ok=True)
 try:
@@ -211,14 +215,15 @@ except Exception as e:
     print("Warning: Could not pre-download version:", e)
 
 
-# 5. Strip Amethyst / Pojav from XMLs & Force Horizontal (sensorLandscape) in Manifest
-for root, _, files in os.walk("app_pojavlauncher/src"):
+# =========================================================================
+# 5. SAFE BRANDING & HORIZONTAL ORIENTATION IN strings.xml & AndroidManifest.xml
+# =========================================================================
+for root, _, files in os.walk("app_pojavlauncher/src/main/res"):
     for f in files:
-        if f.endswith(".xml"):
+        if f == "strings.xml":
             p = os.path.join(root, f)
             with open(p, "r", encoding="utf-8", errors="ignore") as fp:
                 txt = fp.read()
-            orig = txt
             txt = re.sub(
                 r'<string name="app_name"[^>]*>.*?</string>',
                 '<string name="app_name">NovaLauncher</string>',
@@ -231,34 +236,31 @@ for root, _, files in os.walk("app_pojavlauncher/src"):
                 txt,
                 flags=re.DOTALL,
             )
-            txt = re.sub(r"Amethyst\s*\(Debug\)", "NovaLauncher", txt, flags=re.IGNORECASE)
-            txt = re.sub(r"Amethyst\s+Debug", "NovaLauncher", txt, flags=re.IGNORECASE)
-            txt = re.sub(r"Angel\s*Aura\s*Amethyst", "NovaLauncher", txt, flags=re.IGNORECASE)
-            txt = re.sub(r"PojavLauncher", "NovaLauncher", txt, flags=re.IGNORECASE)
-            txt = re.sub(r"\bAmethyst\b", "NovaLauncher", txt)
-            if f == "AndroidManifest.xml":
-                txt = re.sub(r'android:label="[^"]*"', 'android:label="NovaLauncher"', txt)
-                txt = re.sub(
-                    r'android:screenOrientation="portrait"',
-                    'android:screenOrientation="sensorLandscape"',
-                    txt,
-                )
-                txt = re.sub(
-                    r'android:screenOrientation="unspecified"',
-                    'android:screenOrientation="sensorLandscape"',
-                    txt,
-                )
-            if txt != orig:
-                with open(p, "w", encoding="utf-8") as fp:
-                    fp.write(txt)
+            with open(p, "w", encoding="utf-8") as fp:
+                fp.write(txt)
+
+manifest_path = "app_pojavlauncher/src/main/AndroidManifest.xml"
+if os.path.exists(manifest_path):
+    with open(manifest_path, "r", encoding="utf-8", errors="ignore") as fp:
+        mtxt = fp.read()
+    mtxt = re.sub(r'android:label="[^"]*"', 'android:label="NovaLauncher"', mtxt)
+    mtxt = re.sub(r'android:icon="[^"]*"', 'android:icon="@drawable/nova_app_logo"', mtxt)
+    mtxt = re.sub(r'android:roundIcon="[^"]*"', 'android:roundIcon="@drawable/nova_app_logo"', mtxt)
+    mtxt = re.sub(r'android:screenOrientation="portrait"', 'android:screenOrientation="sensorLandscape"', mtxt)
+    mtxt = re.sub(r'android:screenOrientation="unspecified"', 'android:screenOrientation="sensorLandscape"', mtxt)
+    with open(manifest_path, "w", encoding="utf-8") as fp:
+        fp.write(mtxt)
 
 
-# 6. Patch Tools.java, MicrosoftBackgroundLogin.java, mcAccountSpinner.java, MinecraftAccount.java
-def wrap_method_any(src, method_name, fallback_code):
-    pattern = rf"(?:public|private|protected)?\s*(?:static\s+)?[a-zA-Z0-9_<>\[\]]+\s+{method_name}\s*\([^)]*\)\s*(?:throws\s+[^{{]+)?\{{"
+# =========================================================================
+# 6. TYPE-SAFE JAVA PATCHES (MicrosoftBackgroundLogin, MinecraftAccount, Tools)
+# =========================================================================
+def wrap_java_method_safe(src, method_name, void_catch_body, string_catch_body):
+    pattern = rf"(?:public|private|protected)?\s*(?:static\s+)?([a-zA-Z0-9_<>\[\]]+)\s+{method_name}\s*\([^)]*\)\s*(?:throws\s+[^{{]+)?\{{"
     m = re.search(pattern, src)
     if not m:
         return src
+    ret_type = m.group(1).strip()
     brace_start = src.find("{", m.end() - 1)
     if brace_start == -1:
         return src
@@ -275,11 +277,17 @@ def wrap_method_any(src, method_name, fallback_code):
     if end == -1:
         return src
     body = src[brace_start + 1 : end]
+    if ret_type == "void":
+        catch_code = void_catch_body
+    elif ret_type == "String":
+        catch_code = string_catch_body
+    else:
+        return src
     patched = (
         "\n        try {\n"
         + body
         + "\n        } catch (Throwable _novaIgnore) {\n            "
-        + fallback_code
+        + catch_code
         + "\n        }\n    "
     )
     return src[: brace_start + 1] + patched + src[end:]
@@ -293,14 +301,11 @@ for root, _, files in os.walk(java_root):
         if f == "Tools.java":
             with open(p, "r", encoding="utf-8", errors="ignore") as fp:
                 ttxt = fp.read()
-            ttxt = re.sub(
-                r"\b([a-zA-Z0-9_]+)\.show\s*\(\s*\)\s*;",
-                r"try { \1.show(); } catch (Throwable _badTokenIgnored) {}",
-                ttxt,
-            )
-            ttxt = ttxt.replace("PojavLauncher", "NovaLauncher").replace("Amethyst", "NovaLauncher")
+            ttxt = wrap_java_method_safe(ttxt, "dialog", "", "")
+            ttxt = wrap_java_method_safe(ttxt, "dialogOnUiThread", "", "")
             with open(p, "w", encoding="utf-8") as fp:
                 fp.write(ttxt)
+            print("Safely wrapped Tools.dialog / Tools.dialogOnUiThread.")
 
         elif f == "MicrosoftBackgroundLogin.java":
             with open(p, "r", encoding="utf-8", errors="ignore") as fp:
@@ -320,36 +325,45 @@ for root, _, files in os.walk(java_root):
                 jtxt,
                 count=1,
             )
-            jtxt = wrap_method_any(
+
+            jtxt = wrap_java_method_safe(
                 jtxt,
                 "acquireMinecraftToken",
-                'this.doesOwnGame = true;\n            if (this.mcToken == null) this.mcToken = "0";',
+                "this.doesOwnGame = true;",
+                'this.doesOwnGame = true;\n            return "0";',
             )
-            jtxt = wrap_method_any(jtxt, "fetchOwnedItems", "this.doesOwnGame = true;")
-            jtxt = wrap_method_any(jtxt, "checkMcStore", "this.doesOwnGame = true;")
-            jtxt = wrap_method_any(
+            jtxt = wrap_java_method_safe(
+                jtxt,
+                "fetchOwnedItems",
+                "this.doesOwnGame = true;",
+                'this.doesOwnGame = true;\n            return "0";',
+            )
+            jtxt = wrap_java_method_safe(
+                jtxt,
+                "checkMcStore",
+                "this.doesOwnGame = true;",
+                'this.doesOwnGame = true;\n            return "0";',
+            )
+
+            profile_fallback = (
+                "this.doesOwnGame = true;\n"
+                '            if (this.mcName == null || this.mcName.isEmpty() || this.mcName.equalsIgnoreCase("Player")) {\n'
+                "                this.mcName = net.kdt.pojavlaunch.NovaModMenu.getResolvedGamertag();\n"
+                "            }\n"
+                "            if (this.mcUuid == null || this.mcUuid.isEmpty()) {\n"
+                '                this.mcUuid = java.util.UUID.nameUUIDFromBytes(("OfflinePlayer:" + this.mcName).getBytes()).toString().replace("-", "");\n'
+                "            }"
+            )
+            jtxt = wrap_java_method_safe(
                 jtxt,
                 "checkMcProfile",
-                'this.doesOwnGame = true;\n            if (this.mcName == null || this.mcName.isEmpty() || this.mcName.equalsIgnoreCase("Player")) this.mcName = net.kdt.pojavlaunch.NovaModMenu.getResolvedGamertag();\n            if (this.mcUuid == null || this.mcUuid.isEmpty()) this.mcUuid = java.util.UUID.nameUUIDFromBytes(("OfflinePlayer:" + this.mcName).getBytes()).toString().replace("-", "");',
+                profile_fallback,
+                profile_fallback + '\n            return "0";',
             )
-            jtxt = re.sub(
-                r"([a-zA-Z0-9_]+)\.onLoginError\s*\(\s*([a-zA-Z0-9_]+)\s*\)\s*;",
-                r"net.kdt.pojavlaunch.NovaModMenu.completeBedrockLoginFallback(this, doneListener, \1, \2);",
-                jtxt,
-            )
+
             with open(p, "w", encoding="utf-8") as fp:
                 fp.write(jtxt)
-
-        elif f == "mcAccountSpinner.java":
-            with open(p, "r", encoding="utf-8", errors="ignore") as fp:
-                stxt = fp.read()
-            stxt = re.sub(
-                r"Tools\.dialog\s*\([^;]+;",
-                "try { \\g<0> } catch (Throwable _ignored) {}",
-                stxt,
-            )
-            with open(p, "w", encoding="utf-8") as fp:
-                fp.write(stxt)
+            print("Safely patched MicrosoftBackgroundLogin.java.")
 
         elif f == "MinecraftAccount.java":
             with open(p, "r", encoding="utf-8", errors="ignore") as fp:
@@ -362,7 +376,9 @@ for root, _, files in os.walk(java_root):
             with open(p, "w", encoding="utf-8") as fp:
                 fp.write(atxt)
 
-# 7. Hook NovaModMenu into Activities
+# =========================================================================
+# 7. HOOK NovaModMenu INTO ACTIVITIES
+# =========================================================================
 for act_name in ("LauncherActivity.java", "MainActivity.java", "TestStorageActivity.java"):
     for root, _, files in os.walk(java_root):
         if act_name in files:
