@@ -31,10 +31,11 @@ jobs:
           cmdline-tools-version: "latest"
           packages: "platform-tools"
 
-      - name: Install Android SDK & NDK packages
+      - name: Install Android SDK, NDK, ffmpeg & yt-dlp
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build cmake python3
+          sudo apt-get install -y ninja-build cmake python3 python3-pip ffmpeg
+          python3 -m pip install --upgrade yt-dlp || true
           yes | sdkmanager --licenses
           sdkmanager --install \
             "platform-tools" \
@@ -88,7 +89,7 @@ jobs:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
         run: |
-          ./gradlew --no-daemon :app_pojavlauncher:assembleDebug --stacktrace
+          ./gradlew --no-daemon :app_pojavlauncher:assembleDebug
           for apk in app_pojavlauncher/build/outputs/apk/debug/*.apk; do
             if [ -f "$apk" ] && [ "$(basename "$apk")" != "NovaLauncher-debug.apk" ]; then
               mv "$apk" "app_pojavlauncher/build/outputs/apk/debug/NovaLauncher-debug.apk"
