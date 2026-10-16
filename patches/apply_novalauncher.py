@@ -1,10 +1,10 @@
 import os
 import re
 import math
-import wave
 import json
 import zlib
 import struct
+import subprocess
 import urllib.request
 
 # =========================================================================
@@ -38,9 +38,9 @@ for root, _, files in os.walk("."):
 
 
 # =========================================================================
-# 2. GENERATE CUSTOM NOVALAUNCHER LOGO PNG SAFELY (NO .webp / .9.png CORRUPTION)
+# 2. GENERATE SENSE PEACH/CORAL ORB APP LOGO PNG SAFELY
 # =========================================================================
-def make_nova_icon_png(size):
+def make_sense_orb_icon_png(size):
     raw_rows = []
     cx = (size - 1) / 2.0
     cy = (size - 1) / 2.0
@@ -54,20 +54,24 @@ def make_nova_icon_png(size):
             if sdist > 0.95:
                 row.extend((0, 0, 0, 0))
                 continue
+            # Soft warm frosted squircle base (#F6F0F8)
+            r, g, b = 246.0, 240.0, 248.0
             dist = math.hypot(dx, dy)
-            angle = math.atan2(dy, dx)
-            star = (abs(math.cos(angle * 2.0)) ** 6) * max(0.0, 1.0 - dist * 1.15)
-            orb = math.exp(-dist * dist * 5.5)
-            ring = math.exp(-((dist - 0.58) ** 2) * 90.0)
-            border = 1.0 if sdist > 0.90 else 0.0
-            r = 11.0 + 95.0 * orb + 130.0 * star + 99.0 * ring + 60.0 * border
-            g = 12.0 + 70.0 * orb + 190.0 * star + 102.0 * ring + 65.0 * border
-            b = 18.0 + 210.0 * orb + 255.0 * star + 241.0 * ring + 90.0 * border
-            if dist < 0.22:
-                core = (0.22 - dist) / 0.22
-                r += core * 180.0
-                g += core * 180.0
-                b += core * 180.0
+            if dist < 0.62:
+                # 3D Peach/Coral/Rose Sense Orb
+                nx = (dx + 0.18) / 0.62
+                ny = (dy + 0.18) / 0.62
+                highlight = max(0.0, 1.0 - math.hypot(nx, ny))
+                edge = dist / 0.62
+                r = 255.0 * (0.88 + 0.12 * highlight)
+                g = 115.0 + 115.0 * highlight - 25.0 * edge
+                b = 95.0 + 120.0 * highlight + 30.0 * (edge ** 2)
+            elif dist < 0.72:
+                # Soft coral drop shadow around orb
+                fade = (0.72 - dist) / 0.10
+                r = 246.0 - 12.0 * fade
+                g = 240.0 - 38.0 * fade
+                b = 248.0 - 35.0 * fade
             row.extend(
                 (
                     min(255, max(0, int(r))),
@@ -96,15 +100,14 @@ def make_nova_icon_png(size):
     )
 
 
-icon_192 = make_nova_icon_png(192)
-icon_512 = make_nova_icon_png(512)
+icon_192 = make_sense_orb_icon_png(192)
+icon_512 = make_sense_orb_icon_png(512)
 
 drawable_dir = "app_pojavlauncher/src/main/res/drawable"
 os.makedirs(drawable_dir, exist_ok=True)
 with open(os.path.join(drawable_dir, "nova_app_logo.png"), "wb") as out:
     out.write(icon_192)
 
-# Only overwrite standard .png launcher icons (never .9.png or .webp)
 for root, _, files in os.walk("app_pojavlauncher/src/main/res"):
     for f in files:
         fl = f.lower()
@@ -119,73 +122,40 @@ with open("app_pojavlauncher/src/main/assets/nova_logo.png", "wb") as out:
 
 
 # =========================================================================
-# 3. SYNTHESIZE 3 DRIFT PHONK TRACKS INTO assets/nova_phonk/
+# 3. FETCH REAL YOUTUBE PHONK TRACKS VIA yt-dlp / REAL MP3 MIRRORS
 # =========================================================================
 phonk_dir = "app_pojavlauncher/src/main/assets/nova_phonk"
 os.makedirs(phonk_dir, exist_ok=True)
 
+yt_tracks = [
+    ("phonk_01.mp3", "https://www.youtube.com/watch?v=w-sQRS-Lc9k"),  # KORDHELL - MURDER IN MY MIND
+    ("phonk_02.mp3", "https://www.youtube.com/watch?v=ao4RCon11eY"),  # DVRST - CLOSE EYES
+    ("phonk_03.mp3", "https://www.youtube.com/watch?v=pIZ0QRWK0zg"),  # HENSONN - SAHARA
+]
 
-def generate_phonk_wav(filepath, bpm, melody_freqs, bass_freq):
-    sr = 22050
-    step_sec = (60.0 / bpm) / 4.0
-    total_steps = 64
-    total_samples = int(sr * step_sec * total_steps)
-    buf = bytearray()
-    for i in range(total_samples):
-        t = i / float(sr)
-        step = int(t / step_sec) % total_steps
-        step_pos = (t % step_sec) / step_sec
-        b_freq = bass_freq if (step // 16) % 2 == 0 else bass_freq * 1.189
-        bass_env = max(0.0, 1.0 - step_pos * 0.45)
-        bass_raw = math.sin(2.0 * math.pi * b_freq * t) * 2.4
-        bass = max(-0.85, min(0.85, bass_raw)) * bass_env * 0.50
-        cb_freq = melody_freqs[step % len(melody_freqs)]
-        cb = 0.0
-        if cb_freq > 0:
-            cb_env = math.exp(-step_pos * 6.5)
-            w1 = 1.0 if math.sin(2.0 * math.pi * cb_freq * t) >= 0 else -1.0
-            w2 = 1.0 if math.sin(2.0 * math.pi * (cb_freq * 1.481) * t) >= 0 else -1.0
-            cb = (w1 + w2) * 0.5 * cb_env * 0.32
-        kick = 0.0
-        if (step % 16) in (0, 6, 10):
-            k_env = math.exp(-step_pos * 14.0)
-            k_freq = 130.0 * math.exp(-step_pos * 22.0) + 42.0
-            kick = math.sin(2.0 * math.pi * k_freq * (t % step_sec)) * k_env * 0.55
-        if (step % 8) == 4:
-            s_env = math.exp(-step_pos * 16.0)
-            noise = ((i * 1103515245 + 12345) & 0x7FFFFFFF) / 2147483647.0 * 2.0 - 1.0
-            snare = noise * s_env * 0.35
-        else:
-            h_env = math.exp(-step_pos * 38.0)
-            noise = ((i * 214013 + 2531011) & 0x7FFFFFFF) / 2147483647.0 * 2.0 - 1.0
-            snare = noise * h_env * 0.12
-        sample = max(-0.98, min(0.98, bass + cb + kick + snare))
-        buf.extend(struct.pack("<h", int(sample * 32000)))
-    with wave.open(filepath, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sr)
-        wf.writeframes(bytes(buf))
-
-
-generate_phonk_wav(
-    os.path.join(phonk_dir, "01_nova_drift_160bpm.wav"),
-    160,
-    [523.25, 0, 523.25, 622.25, 523.25, 0, 698.46, 622.25, 523.25, 0, 523.25, 622.25, 466.16, 0, 493.88, 0],
-    55.0,
-)
-generate_phonk_wav(
-    os.path.join(phonk_dir, "02_midnight_cowbell_152bpm.wav"),
-    152,
-    [440.0, 440.0, 0, 523.25, 440.0, 0, 587.33, 523.25, 440.0, 0, 392.0, 440.0, 349.23, 0, 392.0, 0],
-    49.0,
-)
-generate_phonk_wav(
-    os.path.join(phonk_dir, "03_shadow_808_168bpm.wav"),
-    168,
-    [587.33, 0, 698.46, 587.33, 783.99, 0, 698.46, 587.33, 523.25, 0, 587.33, 523.25, 440.0, 0, 523.25, 0],
-    61.7,
-)
+for fname, yt_url in yt_tracks:
+    out_path = os.path.join(phonk_dir, fname)
+    try:
+        subprocess.run(
+            [
+                "yt-dlp",
+                "--no-playlist",
+                "-x",
+                "--audio-format",
+                "mp3",
+                "--audio-quality",
+                "5",
+                "--match-filter",
+                "duration < 300",
+                "-o",
+                out_path,
+                yt_url,
+            ],
+            timeout=45,
+            check=False,
+        )
+    except Exception as e:
+        print("yt-dlp note:", e)
 
 
 # =========================================================================
@@ -216,7 +186,7 @@ except Exception as e:
 
 
 # =========================================================================
-# 5. SAFE BRANDING & HORIZONTAL ORIENTATION IN strings.xml & AndroidManifest.xml
+# 5. BRANDING & HORIZONTAL ORIENTATION IN strings.xml & AndroidManifest.xml
 # =========================================================================
 for root, _, files in os.walk("app_pojavlauncher/src/main/res"):
     for f in files:
@@ -305,7 +275,6 @@ for root, _, files in os.walk(java_root):
             ttxt = wrap_java_method_safe(ttxt, "dialogOnUiThread", "", "")
             with open(p, "w", encoding="utf-8") as fp:
                 fp.write(ttxt)
-            print("Safely wrapped Tools.dialog / Tools.dialogOnUiThread.")
 
         elif f == "MicrosoftBackgroundLogin.java":
             with open(p, "r", encoding="utf-8", errors="ignore") as fp:
@@ -325,7 +294,6 @@ for root, _, files in os.walk(java_root):
                 jtxt,
                 count=1,
             )
-
             jtxt = wrap_java_method_safe(
                 jtxt,
                 "acquireMinecraftToken",
@@ -344,7 +312,6 @@ for root, _, files in os.walk(java_root):
                 "this.doesOwnGame = true;",
                 'this.doesOwnGame = true;\n            return "0";',
             )
-
             profile_fallback = (
                 "this.doesOwnGame = true;\n"
                 '            if (this.mcName == null || this.mcName.isEmpty() || this.mcName.equalsIgnoreCase("Player")) {\n'
@@ -360,10 +327,8 @@ for root, _, files in os.walk(java_root):
                 profile_fallback,
                 profile_fallback + '\n            return "0";',
             )
-
             with open(p, "w", encoding="utf-8") as fp:
                 fp.write(jtxt)
-            print("Safely patched MicrosoftBackgroundLogin.java.")
 
         elif f == "MinecraftAccount.java":
             with open(p, "r", encoding="utf-8", errors="ignore") as fp:
@@ -394,4 +359,3 @@ for act_name in ("LauncherActivity.java", "MainActivity.java", "TestStorageActiv
                 )
                 with open(p, "w", encoding="utf-8") as fp:
                     fp.write(act_txt)
-                print(f"Hooked NovaModMenu into {act_name}")
