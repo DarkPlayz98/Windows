@@ -39,60 +39,41 @@ jobs:
           yes | sdkmanager --licenses
           sdkmanager --install \
             "platform-tools" \
+            "platforms;android-35" \
             "platforms;android-36" \
+            "build-tools;35.0.0" \
             "build-tools;36.0.0" \
             "ndk;27.3.13750724" \
             "cmake;3.22.1"
 
-      - name: Clone upstream source & submodules
+      - name: Clone ZalithLauncher2 engine & submodules
         run: |
           git config --global --add url."https://github.com/".insteadOf "git@github.com:"
           git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
 
-          git clone --branch v3_openjdk --depth 1 https://github.com/AngelAuraMC/Amethyst-Android.git launcher
+          git clone --depth 1 --recurse-submodules https://github.com/ZalithLauncher/ZalithLauncher2.git launcher
           cd launcher
-
-          sed -i 's#git@github.com:#https://github.com/#g' .gitmodules
-          sed -i 's#ssh://git@github.com/#https://github.com/#g' .gitmodules
-
-          git submodule init
-          git submodule sync --recursive
           git submodule update --init --recursive
 
-          find . -name ".gitmodules" -exec sed -i 's#git@github.com:#https://github.com/#g' {} +
-          git submodule sync --recursive
-          git submodule update --init --recursive
-
-      - name: Run upstream language script & apply NovaLauncher patches
+      - name: Apply NovaLauncher Branding, Unlocks & Assets
         working-directory: launcher
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           chmod +x gradlew
-          if [ -f scripts/languagelist_updater.sh ]; then
-            chmod +x scripts/languagelist_updater.sh
-            bash scripts/languagelist_updater.sh
-          fi
-          cp ../patches/NovaModMenu.java app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/NovaModMenu.java
           python3 ../patches/apply_novalauncher.py
 
-      - name: Build GLFW stub
+      - name: Build NovaLauncher Debug APK (ARM64)
         working-directory: launcher
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
+          OAUTH_CLIENT_ID: "00000000402b5328"
+          CURSEFORGE_API_KEY: "$2a$10$bL4bIL5pUWqfcO7KQtnMReakwtfHbNKh6v1uTpKlzhwoueEJQnPnm"
         run: |
-          ./gradlew --no-daemon :jre_lwjgl3glfw:build
-
-      - name: Build NovaLauncher debug APK
-        working-directory: launcher
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
-        run: |
-          ./gradlew --no-daemon :app_pojavlauncher:assembleDebug
-          for apk in app_pojavlauncher/build/outputs/apk/debug/*.apk; do
+          ./gradlew --no-daemon :ZalithLauncher:assembleDebug -Darch=arm64
+          for apk in ZalithLauncher/build/outputs/apk/debug/*.apk; do
             if [ -f "$apk" ] && [ "$(basename "$apk")" != "NovaLauncher-debug.apk" ]; then
-              mv "$apk" "app_pojavlauncher/build/outputs/apk/debug/NovaLauncher-debug.apk"
+              cp "$apk" "ZalithLauncher/build/outputs/apk/debug/NovaLauncher-debug.apk"
             fi
           done
 
@@ -100,6 +81,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: NovaCraft-debug-apk
-          path: launcher/app_pojavlauncher/build/outputs/apk/debug/*.apk
+          path: launcher/ZalithLauncher/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
