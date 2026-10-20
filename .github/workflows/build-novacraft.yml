@@ -1,4 +1,4 @@
-name: NovaCraft Android APK (Zalith Engine)
+name: NovaCraft Android APK (Zalith Engine + Bento UI)
 
 on:
   workflow_dispatch:
@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/build-novacraft.yml"
+      - "patches/**"
 
 permissions:
   contents: read
@@ -31,75 +32,31 @@ jobs:
         run: |
           git config --global url."https://github.com/".insteadOf "git@github.com:"
           git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
-          
           git clone --depth 1 https://github.com/ZalithLauncher/ZalithLauncher2.git launcher
           cd launcher
-          
-          # Fix nested submodules to use HTTPS for GitHub Actions
           find . -name ".gitmodules" -exec sed -i 's#git@github.com:#https://github.com/#g' {} +
           git submodule update --init --recursive
 
-      - name: Apply NovaLauncher Branding, Custom Theme & Free Login
+      - name: Inject Custom Bento UI & Phonk Assets
         working-directory: launcher
         run: |
-          python3 - << 'EOF'
-          import os
-          import re
+          # Copy our custom Kotlin Bento UI into Zalith's source tree
+          mkdir -p app/src/main/java/net/kdt/pojavlaunch
+          cp ../patches/NovaBentoActivity.kt app/src/main/java/net/kdt/pojavlaunch/NovaBentoActivity.kt
+          
+          # Run the Python patcher to reroute the app launch and download real Phonk MP3s
+          python3 ../patches/apply_nova_bento.py
 
-          print("Starting NovaLauncher Engine Patch...")
-
-          def patch_file(filepath):
-              with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                  content = f.read()
-              orig = content
-
-              # 1. Full App Rebranding
-              content = content.replace("Zalith Launcher 2", "NovaLauncher")
-              content = content.replace("Zalith Launcher", "NovaLauncher")
-              content = content.replace("ZalithLauncher2", "NovaLauncher")
-              content = content.replace("ZalithLauncher", "NovaLauncher")
-              
-              if filepath.endswith("strings.xml"):
-                  content = re.sub(r'<string name="app_name">[^<]+</string>', '<string name="app_name">NovaLauncher</string>', content)
-
-              # 2. Unlock Free Login System (Bypass Region Locks & Java Purchase Verification)
-              if filepath.endswith(".kt") or filepath.endswith(".java"):
-                  # Force offline mode to be allowed in all regions
-                  content = re.sub(r'(fun\s+[A-Za-z0-9_]*[Oo]ffline[A-Za-z0-9_]*\s*\([^)]*\)\s*:\s*Boolean\s*)\{[^}]*\}', r'\1{ return true }', content)
-                  content = re.sub(r'(val\s+[A-Za-z0-9_]*[Oo]ffline[A-Za-z0-9_]*\s*:\s*Boolean\s*(?:=\s*|get\(\)\s*=\s*))[^;\n]+', r'\1 true', content)
-                  
-                  # Force Microsoft ownership checks to true
-                  content = re.sub(r'(fun\s+[A-Za-z0-9_]*[Oo]wn[A-Za-z0-9_]*\s*\([^)]*\)\s*:\s*Boolean\s*)\{[^}]*\}', r'\1{ return true }', content)
-                  content = re.sub(r'(fun\s+[A-Za-z0-9_]*[Cc]heck[A-Za-z0-9_]*\s*\([^)]*\)\s*:\s*Boolean\s*)\{[^}]*\}', r'\1{ return true }', content)
-                  content = re.sub(r'(val\s+[A-Za-z0-9_]*[Oo]wns[A-Za-z0-9_]*\s*:\s*Boolean\s*(?:=\s*|get\(\)\s*=\s*))[^;\n]+', r'\1 true', content)
-                  content = re.sub(r'(val\s+[A-Za-z0-9_]*[Hh]as[A-Za-z0-9_]*\s*:\s*Boolean\s*(?:=\s*|get\(\)\s*=\s*))[^;\n]+', r'\1 true', content)
-
-              # 3. Custom UI Theme (Shift Colors to Deep Nova Indigo/Cyan Theme to prevent identical UI matching)
-              if "Color.kt" in filepath or "Theme.kt" in filepath or "Colors.kt" in filepath:
-                  content = re.sub(r'0xFF[0-9A-Fa-f]{6}', '0xFF6366F1', content, count=2) # Primary Indigo
-                  content = re.sub(r'0xFF[0-9A-Fa-f]{6}', '0xFF0EA5E9', content, count=1) # Secondary Cyan
-
-              if content != orig:
-                  with open(filepath, "w", encoding="utf-8") as f:
-                      f.write(content)
-                      print(f"Patched: {filepath}")
-
-          for root, _, files in os.walk("."):
-              for file in files:
-                  if file.endswith((".kt", ".java", ".xml", ".properties")):
-                      patch_file(os.path.join(root, file))
-          EOF
-
-      - name: Build NovaLauncher (Zalith Engine)
+      - name: Build NovaLauncher (Debug APK)
         working-directory: launcher
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug --stacktrace
+          ./gradlew --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NovaLauncher-Zalith-Engine
-          path: launcher/**/build/outputs/apk/**/*.apk
+          name: NovaLauncher-Bento-Zalith
+          path: app/build/outputs/apk/**/*.apk
           if-no-files-found: error
           retention-days: 14
