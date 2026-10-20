@@ -1,4 +1,4 @@
-name: NovaCraft Android APK
+name: NovaCraft Android APK (Zalith Engine)
 
 on:
   workflow_dispatch:
@@ -6,7 +6,6 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/build-novacraft.yml"
-      - "patches/**"
 
 permissions:
   contents: read
@@ -19,87 +18,88 @@ jobs:
       - name: Check out NovaCraft repository
         uses: actions/checkout@v4
 
-      - name: Set up Java 21
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "17"
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: "latest"
-          packages: "platform-tools"
 
-      - name: Install Android SDK, NDK, ffmpeg & yt-dlp
+      - name: Clone Zalith Launcher 2 Engine
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build cmake python3 python3-pip ffmpeg
-          python3 -m pip install --upgrade yt-dlp || true
-          yes | sdkmanager --licenses
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;36.0.0" \
-            "ndk;27.3.13750724" \
-            "cmake;3.22.1"
-
-      - name: Clone upstream source & submodules
-        run: |
-          git config --global --add url."https://github.com/".insteadOf "git@github.com:"
-          git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
-
-          git clone --branch v3_openjdk --depth 1 https://github.com/AngelAuraMC/Amethyst-Android.git launcher
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          
+          git clone --depth 1 https://github.com/ZalithLauncher/ZalithLauncher2.git launcher
           cd launcher
-
-          sed -i 's#git@github.com:#https://github.com/#g' .gitmodules
-          sed -i 's#ssh://git@github.com/#https://github.com/#g' .gitmodules
-
-          git submodule init
-          git submodule sync --recursive
-          git submodule update --init --recursive
-
+          
+          # Fix nested submodules to use HTTPS for GitHub Actions
           find . -name ".gitmodules" -exec sed -i 's#git@github.com:#https://github.com/#g' {} +
-          git submodule sync --recursive
           git submodule update --init --recursive
 
-      - name: Run upstream language script & apply NovaLauncher patches
+      - name: Apply NovaLauncher Branding, Custom Theme & Free Login
         working-directory: launcher
         run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          python3 - << 'EOF'
+          import os
+          import re
+
+          print("Starting NovaLauncher Engine Patch...")
+
+          def patch_file(filepath):
+              with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                  content = f.read()
+              orig = content
+
+              # 1. Full App Rebranding
+              content = content.replace("Zalith Launcher 2", "NovaLauncher")
+              content = content.replace("Zalith Launcher", "NovaLauncher")
+              content = content.replace("ZalithLauncher2", "NovaLauncher")
+              content = content.replace("ZalithLauncher", "NovaLauncher")
+              
+              if filepath.endswith("strings.xml"):
+                  content = re.sub(r'<string name="app_name">[^<]+</string>', '<string name="app_name">NovaLauncher</string>', content)
+
+              # 2. Unlock Free Login System (Bypass Region Locks & Java Purchase Verification)
+              if filepath.endswith(".kt") or filepath.endswith(".java"):
+                  # Force offline mode to be allowed in all regions
+                  content = re.sub(r'(fun\s+[A-Za-z0-9_]*[Oo]ffline[A-Za-z0-9_]*\s*\([^)]*\)\s*:\s*Boolean\s*)\{[^}]*\}', r'\1{ return true }', content)
+                  content = re.sub(r'(val\s+[A-Za-z0-9_]*[Oo]ffline[A-Za-z0-9_]*\s*:\s*Boolean\s*(?:=\s*|get\(\)\s*=\s*))[^;\n]+', r'\1 true', content)
+                  
+                  # Force Microsoft ownership checks to true
+                  content = re.sub(r'(fun\s+[A-Za-z0-9_]*[Oo]wn[A-Za-z0-9_]*\s*\([^)]*\)\s*:\s*Boolean\s*)\{[^}]*\}', r'\1{ return true }', content)
+                  content = re.sub(r'(fun\s+[A-Za-z0-9_]*[Cc]heck[A-Za-z0-9_]*\s*\([^)]*\)\s*:\s*Boolean\s*)\{[^}]*\}', r'\1{ return true }', content)
+                  content = re.sub(r'(val\s+[A-Za-z0-9_]*[Oo]wns[A-Za-z0-9_]*\s*:\s*Boolean\s*(?:=\s*|get\(\)\s*=\s*))[^;\n]+', r'\1 true', content)
+                  content = re.sub(r'(val\s+[A-Za-z0-9_]*[Hh]as[A-Za-z0-9_]*\s*:\s*Boolean\s*(?:=\s*|get\(\)\s*=\s*))[^;\n]+', r'\1 true', content)
+
+              # 3. Custom UI Theme (Shift Colors to Deep Nova Indigo/Cyan Theme to prevent identical UI matching)
+              if "Color.kt" in filepath or "Theme.kt" in filepath or "Colors.kt" in filepath:
+                  content = re.sub(r'0xFF[0-9A-Fa-f]{6}', '0xFF6366F1', content, count=2) # Primary Indigo
+                  content = re.sub(r'0xFF[0-9A-Fa-f]{6}', '0xFF0EA5E9', content, count=1) # Secondary Cyan
+
+              if content != orig:
+                  with open(filepath, "w", encoding="utf-8") as f:
+                      f.write(content)
+                      print(f"Patched: {filepath}")
+
+          for root, _, files in os.walk("."):
+              for file in files:
+                  if file.endswith((".kt", ".java", ".xml", ".properties")):
+                      patch_file(os.path.join(root, file))
+          EOF
+
+      - name: Build NovaLauncher (Zalith Engine)
+        working-directory: launcher
+        run: |
           chmod +x gradlew
-          if [ -f scripts/languagelist_updater.sh ]; then
-            chmod +x scripts/languagelist_updater.sh
-            bash scripts/languagelist_updater.sh
-          fi
-          cp ../patches/NovaModMenu.java app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/NovaModMenu.java
-          python3 ../patches/apply_novalauncher.py
-
-      - name: Build GLFW stub
-        working-directory: launcher
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
-        run: |
-          ./gradlew --no-daemon :jre_lwjgl3glfw:build
-
-      - name: Build NovaLauncher debug APK
-        working-directory: launcher
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
-        run: |
-          ./gradlew --no-daemon :app_pojavlauncher:assembleDebug
-          for apk in app_pojavlauncher/build/outputs/apk/debug/*.apk; do
-            if [ -f "$apk" ] && [ "$(basename "$apk")" != "NovaLauncher-debug.apk" ]; then
-              mv "$apk" "app_pojavlauncher/build/outputs/apk/debug/NovaLauncher-debug.apk"
-            fi
-          done
+          ./gradlew --no-daemon assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NovaCraft-debug-apk
-          path: launcher/app_pojavlauncher/build/outputs/apk/debug/*.apk
+          name: NovaLauncher-Zalith-Engine
+          path: launcher/**/build/outputs/apk/**/*.apk
           if-no-files-found: error
           retention-days: 14
