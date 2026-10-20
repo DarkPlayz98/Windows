@@ -25,9 +25,12 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Accept Android SDK Licenses
+      - name: Verify Android SDK & Accept Licenses
         run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          SDK_PATH="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$SDK_PATH" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$SDK_PATH" >> $GITHUB_ENV
+          yes | "$SDK_PATH/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
       - name: Clone Zalith Launcher 2 Engine
         run: |
@@ -44,7 +47,7 @@ jobs:
           git submodule sync --recursive
           git submodule update --init --recursive
 
-      - name: Inject Custom Bento UI, Bedrock Auth & Phonk Assets
+      - name: Inject Custom Bento UI, YT/Spotify Music Page & Bedrock Auth
         working-directory: launcher
         run: |
           mkdir -p ZalithLauncher/src/main/java/net/kdt/pojavlaunch
@@ -53,11 +56,10 @@ jobs:
 
       - name: Build NovaLauncher Debug APK
         working-directory: launcher
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
         run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          SDK_PATH="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "sdk.dir=$SDK_PATH" > local.properties
+          cat local.properties
           chmod +x gradlew
           ./gradlew --no-daemon :ZalithLauncher:assembleDebug -Darch=arm64
 
